@@ -483,7 +483,7 @@ class EvaluatePrequential:
                             break
             for i, m in enumerate(self.anytime_learners):
                 if m.gin:
-                    with open(os.path.join(self.path_write, "choices_gin.pkl"), "wb") as f:
+                    with open(os.path.join(self.path_write, f"choices_gin{self.suffix}.pkl"), "wb") as f:
                         pickle.dump(self._eval[self.anytime_learners[i].name + '_anytime']['alg'][iteration].manager.ensemble_choices, f)
         with open(
             os.path.join(
