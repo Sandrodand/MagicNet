@@ -22,10 +22,15 @@ def set_seq_len(dataset):
         return 10
 
 
-def set_hidden_size(dataset):
+def set_hidden_size(dataset, base_rnn):
     dataset = dataset.lower()
+    if "gru" in base_rnn.lower():
+        return 100
     return 50
 
+def set_gru_hidden_size(dataset):
+    dataset = dataset.lower()
+    return 100
 
 def set_batch_size(dataset):
     dataset = dataset.lower()

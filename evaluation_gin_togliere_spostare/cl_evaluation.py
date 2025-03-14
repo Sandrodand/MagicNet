@@ -9,8 +9,8 @@ from river import metrics
 
 from evaluation.buffer import Buffer
 from evaluation_gin.learner_config import LearnerConfig
-from evaluation_gin.inference_cpnn import InferenceCPNN
-from evaluation_gin.inference_gin import InferenceGIN
+from models.cpnn.inference_cpnn import InferenceCPNN
+from models.gin.inference_gin import InferenceGIN
 
 import torch
 

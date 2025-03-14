@@ -4,11 +4,9 @@ from river import forest, stream
 from river import tree
 from river.drift import ADWIN
 
-#from detectors.detector import Detector
-from evaluation_ccpg.learner_config import LearnerConfig
-from models.cgru_cpnn import cGRULinear
-from models.cpnn import cPNN
-from models.temporally_augmented_classifier import TemporallyAugmentedClassifier
+from models.crnn.clstm import cLSTMLinear
+from models.cpnn.cpnn import cPNN
+from models.sml.temporally_augmented_classifier import TemporallyAugmentedClassifier
 
 
 NUM_OLD_LABELS = 0
@@ -35,10 +33,9 @@ def initialize(
     path_="",
     converters_=None,
     delta_=None,
-    output_size_=2
+    output_size_=2,
 ):
-    global NUM_OLD_LABELS, SEQ_LEN, NUM_FEATURES, BATCH_SIZE, ITERATIONS, EVAL_CL, EVAL_PREQ, INITIAL_TASK, PATH,\
-        CONVERTERS, DELTA, OUTPUT_SIZE
+    global NUM_OLD_LABELS, SEQ_LEN, NUM_FEATURES, BATCH_SIZE, ITERATIONS, EVAL_CL, EVAL_PREQ, INITIAL_TASK, PATH, CONVERTERS, DELTA, OUTPUT_SIZE
     NUM_OLD_LABELS = num_old_labels_
     SEQ_LEN = seq_len_
     NUM_FEATURES = num_features_
@@ -186,7 +183,7 @@ def callback_func_federated(**kwargs):
 
 def create_cpnn_for_dynamic():
     return cPNN(
-        column_class=cGRULinear,
+        column_class=cLSTMLinear,
         device="cpu",
         seq_len=SEQ_LEN,
         train_verbose=False,
@@ -195,7 +192,7 @@ def create_cpnn_for_dynamic():
         save_column_freq=2 * 10**3,
         input_size=NUM_FEATURES,
         output_size=OUTPUT_SIZE,
-        hidden_size=100,
+        hidden_size=50,
     )
 
 
@@ -217,10 +214,3 @@ class BaseLearner:
 
 def create_iter_csv():
     return stream.iter_csv(str(PATH) + ".csv", converters=CONVERTERS, target="target")
-
-
-def create_drift_detector():
-    if "weather" in PATH or "air_quality" or "pen_digits" in PATH:
-        return Detector(ADWIN(delta=DELTA, clock=1))
-    else:
-        return Detector(ADWIN(delta=DELTA, clock=1), training_data_points=50*128)

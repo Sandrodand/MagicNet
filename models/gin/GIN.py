@@ -1,21 +1,17 @@
-import pickle
-
 import torch
 import numpy as np
 from river import metrics
-import warnings
-import copy
 
 import torch.utils.data as data_utils
 from torch.utils.data import DataLoader
-from models.cgru import (
+from models.gin.piggyback_cgru import (
     PiggyBackGRU,
 )
-from models.utils import *
+from models.utils_scl.utils import *
 
-from models.manager import *
-
-from models.network import ModifiedRNN
+from models.gin.manager import *
+# TODO
+import pickle
 
 
 class GIN:
@@ -271,6 +267,10 @@ class GIN:
         task_id: int, default: None
             The id of the new task. If None it increments the last one.
         """
+        #TODO aggiunto check su expansion e salvataggio bias
+        if self.manager.in_expansion:
+            return
+
         if task_id is None:
             task_id = self.task_ids[-1] + 1
 

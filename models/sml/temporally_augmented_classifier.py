@@ -28,9 +28,9 @@ class TemporallyAugmentedClassifier(base.Classifier, ABC):
             temporal augmentation.
         """
         self._base_learner = base_learner
-        self.num_old_labels = num_old_labels
-        self._old_labels = deque([0] * self.num_old_labels)
-        self._old_predictions = deque([0] * self.num_old_labels)
+        self.ta_order = num_old_labels
+        self._old_labels = deque([0] * self.ta_order)
+        self._old_predictions = deque([0] * self.ta_order)
         use_predictions = use_predictions.lower()
         if use_predictions == "test":
             self._use_predictions_train = False
@@ -82,6 +82,13 @@ class TemporallyAugmentedClassifier(base.Classifier, ABC):
             self._update_past_predictions(self._y_hat)
         return self._y_hat
 
+    def update_inference(self, y: base.typing.ClfTarget, **kwargs):
+        self._update_past_labels(y)
+
+    def reset_previous_data_points(self):
+        self._old_labels = deque([0] * self.ta_order)
+        self._old_predictions = deque([0] * self.ta_order)
+
     def predict_many(self, x_batch: list):
         return np.array([self.predict_one(item) for item in x_batch])
 
@@ -108,7 +115,7 @@ class TemporallyAugmentedClassifier(base.Classifier, ABC):
             old_labels = self._old_labels
         else:
             old_labels = self._old_predictions
-        ext = range(len(x_ext.keys()), len(x_ext.keys()) + self.num_old_labels)
+        ext = range(len(x_ext.keys()), len(x_ext.keys()) + self.ta_order)
         for el, old_label in zip(ext, list(old_labels)):
             # check on type of keys, if string or int
             if isinstance(list(x_ext.keys())[0], type("str")):
@@ -118,5 +125,5 @@ class TemporallyAugmentedClassifier(base.Classifier, ABC):
         return x_ext
 
     def reset_previous_data_points(self):
-        self._old_labels = deque([0] * self.num_old_labels)
-        self._old_predictions = deque([0] * self.num_old_labels)
+        self._old_labels = deque([0] * self.ta_order)
+        self._old_predictions = deque([0] * self.ta_order)

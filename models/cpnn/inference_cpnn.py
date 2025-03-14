@@ -1,8 +1,6 @@
-from models.cpnn import cPNN
+from models.cpnn.cpnn import cPNN
 import numpy as np
-import pickle
 from river import metrics
-import torch
 
 
 class InferenceCPNN:
@@ -22,11 +20,6 @@ class InferenceCPNN:
             Use -1 to keep the ensemble during the entire inference phase.
         """
         self.model: cPNN = model
-        self.model.columns.device = torch.device("cpu")
-        self.model.columns.to(self.model.columns.device)
-        for col in self.model.columns.columns:
-            col.device = self.model.columns.device
-            col.to(self.model.columns.device)
         self._previous_data_points = None
         self.metrics = None
         self.selected = None
@@ -52,7 +45,6 @@ class InferenceCPNN:
         timestamp: int, default -1.
             The timestamp associated with the data point. Use -1 in case of no delay between features and labels.
         """
-        #x.to(self.device)
         self.predictions[timestamp] = []
         for col in self.columns:
             self.predictions[timestamp].append(

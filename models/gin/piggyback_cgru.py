@@ -1,15 +1,8 @@
 # this file is for Main network that contains piggyback layers with masks.
 # here we just
 import torch
-import numpy as np
-from sklearn.metrics import accuracy_score, cohen_kappa_score
-import warnings
 import torch.nn as nn
-import torch.nn.functional as F
-from torch.autograd import Variable
-from torch.nn.modules.utils import _pair
-from torch.nn.parameter import Parameter
-import models.piggyback_layers as nl
+import models.gin.piggyback_layers as nl
 
 
 class PiggyBackGRU(nn.Module):

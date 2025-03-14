@@ -5,8 +5,8 @@ import numpy as np
 from river import metrics
 import warnings
 
-from models.cpnn_columns import cPNNColumns
-from models.utils import (
+from models.cpnn.cpnn_columns import cPNNColumns
+from models.utils_scl.utils import (
     customized_loss,
     accuracy,
     cohen_kappa,
@@ -15,10 +15,9 @@ from models.utils import (
 )
 import torch.utils.data as data_utils
 from torch.utils.data import DataLoader
-from models.clstm import (
+from models.crnn.clstm import (
     cLSTMLinear,
 )
-from models.cgru_cpnn import cGRULinear
 
 
 class cPNN:
@@ -28,7 +27,7 @@ class cPNN:
 
     def __init__(
         self,
-        column_class=cGRULinear,
+        column_class=cLSTMLinear,
         device=None,
         lr: float = 0.01,
         seq_len: int = 5,
@@ -136,6 +135,7 @@ class cPNN:
         self.last_ts_train = -1
         self.last_ts_predict = -1
         self.predictions = {}
+        self.device = device
 
     def get_seq_len(self):
         return self.seq_len
@@ -277,7 +277,13 @@ class cPNN:
         else:
             self.task_ids.append(task_id)
 
-    def learn_one(self, x: np.array, y: int, previous_data_points: np.array = None, timestamp: int = -1):
+    def learn_one(
+        self,
+        x: np.array,
+        y: int,
+        previous_data_points: np.array = None,
+        timestamp: int = -1,
+    ):
         """
         It trains cPNN on a single data point. In the case of anytime learner, the training is performed after each
         data point. In the case of periodic learner (anytime_learner=False), the training is performed after filling
@@ -495,7 +501,11 @@ class cPNN:
         return x
 
     def predict_one(
-        self, x: np.array, column_id: int = None, previous_data_points: np.array = None, timestamp: int = -1
+        self,
+        x: np.array,
+        column_id: int = None,
+        previous_data_points: np.array = None,
+        timestamp: int = -1,
     ):
         """
         It performs prediction on a single data point.
@@ -666,9 +676,7 @@ class cPNN:
         outputs = self.columns(x, train=True)
         if not self.loss_on_seq:
             outputs = get_samples_outputs(outputs)
-
-        
-        loss = customized_loss(outputs, y, self.columns.criterion,device=self.columns_args["device"])
+        loss = customized_loss(outputs, y, self.columns.criterion, self.device)
         self.columns.optimizers[-1].zero_grad()
         loss.backward()
         self.columns.optimizers[-1].step()

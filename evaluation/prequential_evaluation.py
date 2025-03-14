@@ -36,7 +36,6 @@ class EvaluatePrequential:
         path_write: str = None,
         suffix: str = "",
         write_checkpoints: bool = False,
-        write_choices: bool = False,
         iterations: int = 1,
         dataset_name: str = "",
         mode: str = "local",
@@ -46,8 +45,8 @@ class EvaluatePrequential:
         drift_detector=None,
         iteration_str=None,
         initial_task=1,
-        preprocessing_func = None,
-        delay: int = 0
+        preprocessing_func=None,
+        delay: int = 0,
     ):
         """
         Parameters
@@ -115,9 +114,6 @@ class EvaluatePrequential:
         else:
             self.batch_learners = batch_learners
         self._write_checkpoints = write_checkpoints
-
-        self._write_choices = write_choices
-
         self._predictions = {}
         self._iterations = iterations
         self.dataset_name = dataset_name
@@ -232,18 +228,25 @@ class EvaluatePrequential:
         #     return CohenKappaTemporal()
 
     def _iter_anytime_learners(
-        self, x, x_preproc, y, x_train, x_train_preproc, y_train, models: List[LearnerConfig], task=None, iteration=0, idx=-1
+        self,
+        x,
+        x_preproc,
+        y,
+        x_train,
+        x_train_preproc,
+        y_train,
+        models: List[LearnerConfig],
+        task=None,
+        iteration=0,
+        idx=-1,
     ):
         i = 0
         for model in models:
-            
             if model.numeric:
                 x_ = list(x_preproc.values())
             else:
                 x_ = x
-            
             model_name = model.name + "_anytime"
-
             if self.drift_supervised:
                 # reset 'task' metrics
                 for metric in self.metrics:
@@ -256,30 +259,24 @@ class EvaluatePrequential:
                 self.checkpoint[model_name][iteration].append(
                     pickle.loads(pickle.dumps(self._eval[model_name]["alg"][iteration]))
                 )
-
             if self.drift_detected and model.drift:
-                self._eval[model_name]["alg"][iteration].add_new_column(task)
+                self._eval[model_name]["alg"][iteration].add_new_column()
             if model.cpnn:
-                y_hat = self._eval[model_name]["alg"][iteration].predict_one(x_, timestamp=idx)
+                y_hat = self._eval[model_name]["alg"][iteration].predict_one(
+                    x_, timestamp=idx
+                )
             else:
                 y_hat = self._eval[model_name]["alg"][iteration].predict_one(x_)
             self._predictions[model_name][iteration] += [y_hat]
             y_hat = 0 if y_hat is None else y_hat
-            
-            
             for metric in self.metrics:
                 for t in ["all", "task"]:
                     # update the metrics
-                    
-                    # self._eval[model_name]["metrics"][t][metric][
-                    #     iteration
-                    # ] = self._eval[model_name]["metrics"][t][metric][iteration].update(
-                    #     y, y_hat
-                    # )
-                    self._eval[model_name]["metrics"][t][metric][iteration].update(
+                    self._eval[model_name]["metrics"][t][metric][
+                        iteration
+                    ] = self._eval[model_name]["metrics"][t][metric][iteration].update(
                         y, y_hat
                     )
-                    
                     # get metrics
                     self._perf[model_name][t][metric][iteration].append(
                         self._eval[model_name]["metrics"][t][metric][iteration].get()
@@ -291,7 +288,9 @@ class EvaluatePrequential:
                 else:
                     x_ = x_train
                 if model.cpnn:
-                    self._eval[model_name]["alg"][iteration].learn_one(x_, y_train, timestamp=idx-self.delay)
+                    self._eval[model_name]["alg"][iteration].learn_one(
+                        x_, y_train, timestamp=idx - self.delay
+                    )
                 else:
                     self._eval[model_name]["alg"][iteration].learn_one(x_, y_train)
             end = datetime.datetime.now()
@@ -453,12 +452,12 @@ class EvaluatePrequential:
                                 ]
                             )
                         )
-                    if m.cpnn and m.drift and add_new_column:
-                        self._eval[model_name]["alg"][iteration].add_new_column(task)
+                    if m.drift and add_new_column:
+                        self._eval[model_name]["alg"][iteration].add_new_column()
                 batch.append((x, y))
                 i += 1
 
-    def _write_pickles(self, iteration=0, write_checkpoints=False, write_choices= True):
+    def _write_pickles(self, iteration=0, write_checkpoints=False):
         if len(self.batch_learners) > 0:
             seq_len = f"_{self._eval[self.batch_learners[0].name+'_batch']['alg'][iteration].get_seq_len()}"
         elif len(self.anytime_learners) > 0:
@@ -482,6 +481,10 @@ class EvaluatePrequential:
                             if "_TA" in m.name.upper():
                                 seq_len = f"_{self._eval[m.name + '_anytime']['alg'][iteration].ta_order + 1}"
                             break
+            for i, m in enumerate(self.anytime_learners):
+                if m.gin:
+                    with open(os.path.join(self.path_write, "choices_gin.pkl"), "wb") as f:
+                        pickle.dump(self._eval[self.anytime_learners[i].name + '_anytime']['alg'][iteration].manager.ensemble_choices, f)
         with open(
             os.path.join(
                 self.path_write,
@@ -501,7 +504,7 @@ class EvaluatePrequential:
         with open(
             os.path.join(
                 self.path_write,
-                f"drifts_{self.batch_size}{seq_len}{self.suffix}.pkl",
+                f"drifts{self.suffix}.pkl",
             ),
             "wb",
         ) as f:
@@ -515,18 +518,6 @@ class EvaluatePrequential:
                 "wb",
             ) as f:
                 pickle.dump(self._build_checkpoints(iteration), f)
-        
-
-    def write_choices(self,iteration = 0):
-        if self._write_choices and "cCPG_anytime" in self.checkpoint.keys():
-            with open(
-                os.path.join(
-                    self.path_write,
-                    f"choices_it{iteration}.pkl",
-                ),
-                "wb",
-            ) as f:
-                pickle.dump(self.checkpoint["cCPG_anytime"][iteration][-1].manager.ensemble_choices, f)
 
     def _build_checkpoints(self, iteration):
         check = {}
@@ -605,7 +596,7 @@ class EvaluatePrequential:
             In the case of periodic classifier scenario, key1 could be also 'batch'.
             d['{name}_{scenario}']['batch'][metric][it] will be a list containing the performance on each batch for
             the specific metric ('kappa' or 'accuracy') and the iteration 'it'.
-        - performance_{batch_size}_{seq_len}{suffix}.pkl:
+        - predictions_{batch_size}_{seq_len}{suffix}.pkl:
             It's a dict d where d['{name}_{scenario}'][it] contains the list of the predictions made by the model
             with name 'name', in the scenario 'scenario', during the iteration 'it'.
         """
@@ -640,7 +631,6 @@ class EvaluatePrequential:
             drift_detector = pickle.loads(pickle.dumps(self.drift_detector))
             self.detected_drifts.append([])
             for idx, (x, y) in enumerate(stream):
-                
                 if (idx + 1) % 100 == 0:
                     print(
                         self.dataset_name,
@@ -687,6 +677,7 @@ class EvaluatePrequential:
                     self.detected_drifts[-1].append(idx)
                     print()
                     print("DETECTED DRIFT:", idx)
+                    self._write_pickles(write_checkpoints=True)
                 if self.drift_supervised:
                     print()
                     self._write_pickles(write_checkpoints=True)
@@ -703,11 +694,8 @@ class EvaluatePrequential:
                         models=self.anytime_learners,
                         task=self.prev_task,
                         iteration=iteration,
-                        idx=idx
+                        idx=idx,
                     )
-                    if self.drift_supervised:
-                        self.write_choices(iteration=iteration)
-
                     if not self.drift_supervised:
                         # if there is no drift, we must test the anytime model on the new data point before training on
                         # the mini-batch. Periodic learners work without drift detection.
@@ -760,6 +748,8 @@ class EvaluatePrequential:
 
             if self.anytime_scenario:
                 for m in self.anytime_learners:
+                    if m.gin:
+                        self._eval[m.name + "_anytime"]["alg"][iteration].manager.store_masks_biases()
                     self.checkpoint[m.name + "_anytime"][iteration].append(
                         pickle.loads(
                             pickle.dumps(
@@ -770,6 +760,8 @@ class EvaluatePrequential:
 
             if self.periodic_scenario:
                 for m in self.anytime_learners + self.batch_learners:
+                    if m.gin and not self.anytime_scenario:
+                        self._eval[m.name + "_batch"]["alg"][iteration].manager.store_masks_biases()
                     self.checkpoint[m.name + "_batch"][iteration].append(
                         pickle.loads(
                             pickle.dumps(
@@ -779,7 +771,6 @@ class EvaluatePrequential:
                     )
 
             self._write_pickles(self._iterations - 1, write_checkpoints=True)
-            self.write_choices(iteration=self._iterations - 1)
 
             if callback is not None:
                 callback(

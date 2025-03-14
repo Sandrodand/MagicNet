@@ -1,11 +1,10 @@
-from GIN import GIN
+from models.gin.GIN import GIN
 import numpy as np
-import pickle
 import torch
 from river import metrics
 import copy
-from evaluation_gin.quantizedCGRU import quantizedCGRU
-from torch.nn.parameter import Parameter
+from models.gin.quantizedCGRU import quantizedCGRU
+
 
 def inverseSigmoid(tensor):
     """
@@ -22,8 +21,9 @@ def inverseSigmoid(tensor):
     tensor = torch.clamp(tensor, epsilon, 1 - epsilon)
     return torch.log(tensor / (1 - tensor))
 
+# TODO tolto biases
 class InferenceGIN:
-    def __init__(self, model: GIN,linear_biases = [], ensemble_data_points=128 * 2):
+    def __init__(self, model: GIN, ensemble_data_points=128 * 2):
         """
         It implements a wrapper on a cPNN model to perform inference when the task label is not known.
         It builds an ensemble that considers all the columns of a given cPNN model. On the i-th data point of the test
@@ -41,7 +41,8 @@ class InferenceGIN:
         self.model: GIN = model
         self.inference_model = copy.deepcopy(model)
         self._previous_data_points = None
-        self.linear_biases = linear_biases
+        # TODO tolto
+        #self.linear_biases = linear_biases
         self.metrics = None
         self.no_preparation = False
         self.selected = None
@@ -134,11 +135,12 @@ class InferenceGIN:
             else:
                 weights[name] = getattr(self.model.manager.model.classifier[module],name)[:size[0],:size[1]]
             newmasks[name] = sigmoid(mask)
-        qcGRU = quantizedCGRU(weights = weights,masks = newmasks,  bias = self.linear_biases[0], device = self.model.device)
+        # TODO prendo bias dal manager
+        qcGRU = quantizedCGRU(weights = weights,masks = newmasks,  bias = self.model.manager.biases[0], device = self.model.device)
         models.append(torch.quantization.quantize_dynamic(qcGRU, conf, dtype=torch.qint8))
         weights = {}
         newmasks = {}
-        for i, masks in enumerate(self.model.manager.piggymask_list):
+        for biases, masks in zip(self.model.manager.biases[1:], self.model.manager.piggymask_list[1:]):
             for name, mask in masks.items():
                 name = name.replace("mask_real_","")
                 size = mask.size()
@@ -152,7 +154,7 @@ class InferenceGIN:
                     weights[name] = getattr(self.model.manager.model.classifier[module],name)[:size[0],:size[1]]
                 newmasks[name] = mask
 
-            qcGRU = quantizedCGRU(weights = weights,masks = newmasks,  bias = self.linear_biases[i+1], device = self.model.device)
+            qcGRU = quantizedCGRU(weights = weights,masks = newmasks,  bias = biases, device = self.model.device)
             models.append(torch.quantization.quantize_dynamic(qcGRU, conf, dtype=torch.qint8))
             weights = {}
         weights = {}

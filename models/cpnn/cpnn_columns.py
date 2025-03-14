@@ -1,8 +1,7 @@
 import torch
 from torch import nn
 import torch.quantization
-from models.clstm import cLSTMLinear
-from models.cgru_cpnn import cGRULinear
+from models.crnn.clstm import cLSTMLinear
 
 
 class cPNNColumns(torch.nn.Module):
@@ -12,7 +11,7 @@ class cPNNColumns(torch.nn.Module):
 
     def __init__(
         self,
-        column_class=cGRULinear,
+        column_class=cLSTMLinear,
         device=None,
         lr=0.01,
         many_to_one=False,

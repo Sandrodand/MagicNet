@@ -7,8 +7,7 @@ import sys
 import traceback
 from evaluation.parameter_config import *
 from evaluation.default_parameters import *
-from GIN import *
-from itertools import product
+
 #from models.dynamic_cpnn import DynamicCPNN
 
 # __________________

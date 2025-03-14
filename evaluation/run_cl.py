@@ -1,10 +1,7 @@
 from evaluation.cl_evaluation import *
-import os
-import pickle
 
-from models.dynamic_cpnn import DynamicCPNN
+from models.cpnn.cpnn import DynamicCPNN
 from evaluation.test_utils import *
-
 
 
 PATHS = [
@@ -20,7 +17,7 @@ BATCH_SIZE = 128
 ANYTIME_LEARNERS = [
     LearnerConfig(
         name="ARF_TA",
-        model=lambda : print(end=""),
+        model=lambda: print(end=""),
         numeric=False,
         batch_learner=False,
         drift=False,
@@ -28,7 +25,7 @@ ANYTIME_LEARNERS = [
     ),
     LearnerConfig(
         name="cPNN",
-        model=lambda : print(end=""),
+        model=lambda: print(end=""),
         numeric=True,
         batch_learner=False,
         drift=True,
@@ -36,7 +33,7 @@ ANYTIME_LEARNERS = [
     ),
     LearnerConfig(
         name="cLSTM",
-        model=lambda : print(end=""),
+        model=lambda: print(end=""),
         numeric=True,
         batch_learner=False,
         drift=False,
@@ -44,7 +41,7 @@ ANYTIME_LEARNERS = [
     ),
     LearnerConfig(
         name="DyncPNN",
-        model=lambda : print(end=""),
+        model=lambda: print(end=""),
         numeric=True,
         batch_learner=False,
         drift=True,
@@ -75,9 +72,19 @@ for PATH in PATHS:
     else:
         SEQ_LEN = SEQ_LEN_PARAM
     current_path_performance = os.path.join(PATH_PERFORMANCE, dataset)
-    initialize(seq_len_=SEQ_LEN, num_old_labels_=SEQ_LEN-1, batch_size_=BATCH_SIZE, num_features_=NUM_FEATURES)
+    initialize(
+        seq_len_=SEQ_LEN,
+        num_old_labels_=SEQ_LEN - 1,
+        batch_size_=BATCH_SIZE,
+        num_features_=NUM_FEATURES,
+    )
 
-    with open(os.path.join(current_path_performance, f"checkpoints_{BATCH_SIZE}_{SEQ_LEN}_it0.pkl"), "rb") as f:
+    with open(
+        os.path.join(
+            current_path_performance, f"checkpoints_{BATCH_SIZE}_{SEQ_LEN}_it0.pkl"
+        ),
+        "rb",
+    ) as f:
         checkpoint_file = pickle.load(f)
     checkpoint = {}
     for model in ANYTIME_LEARNERS:
@@ -99,14 +106,13 @@ for PATH in PATHS:
                     cpnn.columns.columns = cols
                 checkpoint[model_name][-1].append(DynamicCPNN(models=dyn_cpnns))
 
-
     eval_cl = EvaluateContinualLearning(
         path=f"{PATH}_test",
         checkpoint=checkpoint,
         learners_config=ANYTIME_LEARNERS,
         path_write=current_path_performance,
         batch_size=BATCH_SIZE,
-        seq_len=SEQ_LEN
+        seq_len=SEQ_LEN,
     )
 
     eval_cl.evaluate()

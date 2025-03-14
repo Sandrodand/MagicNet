@@ -2,21 +2,16 @@ import os
 import pickle
 from river import forest, stream
 from river import tree
-from river.drift import ADWIN
 
-
-from models.clstm import cLSTMLinear
-from models.cgru_cpnn import cGRULinear
-from models.cpnn import cPNN
-from GIN import GIN
-from models.temporally_augmented_classifier import TemporallyAugmentedClassifier
-
-
-
+from models.crnn.cgru import cGRULinear
+from models.crnn.clstm import cLSTMLinear
+from models.cpnn.cpnn import cPNN
+from models.gin.GIN import GIN
+from models.sml.temporally_augmented_classifier import TemporallyAugmentedClassifier
 
 
 class Config:
-    def __init__(self):
+    def __init__(self, base_learner = "clstm"):
         self.ta_order = 9
         self.seq_len = 10
         self.num_features = 2
@@ -36,7 +31,10 @@ class Config:
         self.mask_init = "uniform"
         self.ensemble_batches = 50
         self.ensemble_th = 1.2
-        self.base_learner = BaseLearner(self.create_cpnn_for_dynamic)
+        if "gru" in base_learner.lower():
+            self.base_learner = BaseLearner(self.create_cpnn_cgru_for_dynamic)
+        else:
+            self.base_learner = BaseLearner(self.create_cpnn_clstm_for_dynamic)
 
     def set_params(
         self,
@@ -93,18 +91,36 @@ class Config:
         if ensemble_th is not None:
             self.ensemble_th = ensemble_th
 
-        
+
 
     def initialize_callback(self, eval_cl_, eval_preq_):
         self.eval_cl = eval_cl_
         self.eval_preq = eval_preq_
 
+    @staticmethod
+    def create_hat():
+        return tree.HoeffdingAdaptiveTreeClassifier(
+            grace_period=100,
+            delta=1e-5,
+            leaf_prediction="nb",
+            nb_threshold=10,
+        )
 
+    def create_hat_ta(self):
+        return TemporallyAugmentedClassifier(
+            base_learner=self.create_hat(),
+            num_old_labels=self.ta_order,
+        )
 
     @staticmethod
     def create_arf():
         return forest.ARFClassifier(leaf_prediction="nb")
 
+    @staticmethod
+    def create_arf_no_adwin():
+        return forest.ARFClassifier(
+            leaf_prediction="nb", drift_detector=None, warning_detector=None
+        )
 
     def create_arf_ta(self):
         return TemporallyAugmentedClassifier(
@@ -112,7 +128,21 @@ class Config:
             num_old_labels=self.ta_order,
         )
 
+    def create_arf_ta_no_adwin(self):
+        return TemporallyAugmentedClassifier(
+            base_learner=self.create_arf_no_adwin(),
+            num_old_labels=self.ta_order,
+        )
 
+    def create_arf_ta_features(self):
+        return TemporallyAugmentedFeaturesClassifier(
+            base_learner=self.create_arf(), ta_order=self.ta_order
+        )
+
+    def create_arf_ta_features_no_adwin(self):
+        return TemporallyAugmentedFeaturesClassifier(
+            base_learner=self.create_arf_no_adwin(), ta_order=self.ta_order
+        )
 
     def create_qcpnn_clstm(self):
         return cPNN(
@@ -129,27 +159,54 @@ class Config:
             hidden_size=self.hidden_size,
         )
 
-    def create_GIN_cGRU(self):   # Transform in cGRU Linear  TODO
-        return GIN(
+
+    def create_acpnn_clstm(self):
+        return cPNN(
+            column_class=cLSTMLinear,
             device="cpu",
             seq_len=self.seq_len,
             train_verbose=False,
             acpnn=True,
-            mask_init = self.mask_init,
-            ensemble_batches = self.ensemble_batches,
+            qcpnn=False,
             batch_size=self.batch_size,
-            threshold_fn = self.threshold_fn,
             save_column_freq=None,
             input_size=self.num_features,
             output_size=self.output_size,
             hidden_size=self.hidden_size,
-            hidden_mult = self.hidden_mult,
-            ensemble_th = self.ensemble_th,
-            ensemble_mode = "classic",
-            cGRU_weights = self.base_learner.get_base_learner()
         )
-    
-    def create_GIN_cGRU_last(self):  
+
+    def create_cpnn_clstm_for_dynamic(self):
+        return cPNN(
+            column_class=cLSTMLinear,
+            device="cpu",
+            seq_len=self.seq_len,
+            train_verbose=False,
+            acpnn=True,
+            qcpnn=False,
+            batch_size=self.batch_size,
+            save_column_freq=2 * 10**3,
+            input_size=self.num_features,
+            output_size=self.output_size,
+            hidden_size=self.hidden_size,
+        )
+
+    def create_cpnn_cgru_for_dynamic(self):
+        return cPNN(
+            column_class=cGRULinear,
+            device=self.device,
+            seq_len=self.seq_len,
+            train_verbose=False,
+            acpnn=True,
+            qcpnn=False,
+            batch_size=self.batch_size,
+            save_column_freq=2 * 10**3,
+            input_size=self.num_features,
+            output_size=self.output_size,
+            hidden_size=self.hidden_size,
+        )
+
+
+    def create_GIN_cGRU_last(self):
         return GIN(
             device="cpu",
             seq_len=self.seq_len,
@@ -167,41 +224,6 @@ class Config:
             ensemble_th = self.ensemble_th,
             ensemble_mode = "last",
             cGRU_weights = self.base_learner.get_base_learner()
-        )
-    
-    def create_GIN_cGRU_average(self):  
-        return GIN(
-            device="cpu",
-            seq_len=self.seq_len,
-            train_verbose=False,
-            acpnn=True,
-            mask_init = self.mask_init,
-            ensemble_batches = self.ensemble_batches,
-            batch_size=self.batch_size,
-            threshold_fn = self.threshold_fn,
-            save_column_freq=None,
-            input_size=self.num_features,
-            output_size=self.output_size,
-            hidden_size=self.hidden_size,
-            hidden_mult = self.hidden_mult,
-            ensemble_th = self.ensemble_th,
-            ensemble_mode = "average",
-            cGRU_weights = self.base_learner.get_base_learner()
-        )
-
-    def create_cpnn_for_dynamic(self):
-        return cPNN(
-            column_class=cGRULinear,
-            device=self.device,
-            seq_len=self.seq_len,
-            train_verbose=False,
-            acpnn=True,
-            qcpnn=False,
-            batch_size=self.batch_size,
-            save_column_freq=2 * 10**3,
-            input_size=self.num_features,
-            output_size=self.output_size,
-            hidden_size=self.hidden_size,
         )
 
     def callback_func_cl(self, **kwargs):
@@ -234,7 +256,10 @@ class Config:
                     ],
                     "federated_task_dict": models[model].task_dict,
                     "columns_perf": [
-                        {task: perf.get() for task, perf in zip(m.task_ids, m.columns_perf)}
+                        {
+                            task: perf.get()
+                            for task, perf in zip(m.task_ids, m.columns_perf)
+                        }
                         for m in models[model].ensemble
                     ],
                 }
@@ -242,59 +267,8 @@ class Config:
             pickle.dump(selection, f)
 
     def create_iter_csv(self):
-        return stream.iter_csv(str(self.path) + ".csv", converters=self.converters, target="target")
-
-    def create_drift_detector(self):
-        path = self.path.lower()
-        if "future" in path:
-            if "air_quality" in path:
-                return Detector(
-                    ADWIN(delta=self.delta, clock=1),
-                    training_data_points=-1,
-                    model=self.create_arf_no_adwin(),
-                )
-            if "weather" in path:
-                return Detector(
-                    ADWIN(delta=self.delta, clock=1),
-                    training_data_points=50 * 128,
-                    model=self.create_arf_no_adwin()
-                )
-            if "energy" in path:
-                return Detector(
-                    ADWIN(delta=self.delta, clock=1),
-                    training_data_points=50 * 128,
-                    model=self.create_arf_no_adwin()
-                )
-        # not future
-        if "air_quality" in path:
-            return Detector(
-                ADWIN(delta=self.delta, clock=1),
-                training_data_points=-1,
-                model=self.create_arf_no_adwin()
-            )
-        if "weather" in path:
-            return Detector(
-                ADWIN(delta=self.delta, clock=1),
-                training_data_points=50 * 128,
-                model=self.create_arf_ta_features_no_adwin()
-            )
-        if "energy" in path:
-            return Detector(
-                ADWIN(delta=self.delta, clock=1),
-                training_data_points=50 * 128,
-                model=self.create_arf_ta_features_no_adwin()
-            )
-        if "sine" in path:
-            return Detector(
-                ADWIN(delta=self.delta, clock=1),
-                training_data_points=50 * 128,
-                model=self.create_arf_no_adwin()
-            )
-        # else
-        return Detector(
-            ADWIN(delta=self.delta, clock=1),
-            training_data_points=50 * 128,
-            model=self.create_arf_no_adwin()
+        return stream.iter_csv(
+            str(self.path) + ".csv", converters=self.converters, target="target"
         )
 
 
@@ -313,5 +287,3 @@ class BaseLearner:
 
     def reset_base_learner(self):
         self.base_learner = self.learner_func()
-
-

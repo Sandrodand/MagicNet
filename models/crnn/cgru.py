@@ -6,11 +6,11 @@ import numpy as np
 class cGRULinear(nn.Module):
     def __init__(
         self,
-        input_size=4,
+        input_size=2,
         device=torch.device("cpu"),
-        hidden_size=50,
+        hidden_size=128,
         output_size=2,
-        batch_size=128,
+        batch_size=50,
         many_to_one=False,
     ):
         super(cGRULinear, self).__init__()

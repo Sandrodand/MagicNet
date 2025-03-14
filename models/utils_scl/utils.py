@@ -88,7 +88,8 @@ def cohen_kappa(outputs, targets, device=torch.device("cpu")):
     model_kappa = torch.nan_to_num(model_kappa, nan=0, posinf=0, neginf=0)
     return model_kappa
 
-def kappa_temporal_score(y_true:np.array, y_pred:np.array, first_label=None):
+
+def kappa_temporal_score(y_true: np.array, y_pred: np.array, first_label=None):
     """
     Parameters
     ----------
@@ -151,12 +152,12 @@ def kappa_temporal(outputs, targets, first_label=None):
 """@torch.enable_grad()"""
 def customized_loss(predictions, y, criterion,device):
     #print(predictions.type(), y.type())
-    
+
     if y.type() != torch.LongTensor:
         y=y.type(torch.LongTensor)
-    
+
     y = y.to(device)
-    
+
     return criterion(predictions, y)
 
 

@@ -1,14 +1,6 @@
 # first we need to load the pretrain model and then transfer the weights to the our impelemnted network.
-import torch
-import numpy as np
-import warnings
-import torch.nn as nn
-import torch.nn.functional as F
-from torch.autograd import Variable
-from torch.nn.modules.utils import _pair
-from torch.nn.parameter import Parameter
 
-from models.cgru import *
+from models.crnn.cgru import *
 
 import pickle
 class ModifiedRNN(nn.Module):

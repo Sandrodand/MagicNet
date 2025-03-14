@@ -16,7 +16,8 @@ class LearnerConfig:
         cpnn: bool = False,
         smart: bool = False,
         dyn_cpnn: bool = False,
-        temp_dep: bool = True
+        temp_dep: bool = True,
+        gin: bool = False
     ):
         """
 
@@ -53,10 +54,11 @@ class LearnerConfig:
         self.smart = smart
         self.dyn_cpnn = dyn_cpnn
         self.temp_dep = temp_dep
+        self.gin = gin
 
         if self.dyn_cpnn:
             self.cpnn = True
-        if self.cpnn:
+        if self.cpnn or self.gin:
             self.numeric = True
         else:
             self.smart = False
@@ -66,7 +68,7 @@ class LearnerConfig:
             else:
                 self.numeric = False
         if self.drift is None:
-            if self.cpnn:
+            if self.cpnn or self.gin:
                 self.drift = True
             elif self.batch_learner:
                 self.drift = True
