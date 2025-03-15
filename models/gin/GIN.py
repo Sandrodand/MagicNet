@@ -1,6 +1,5 @@
 import torch
 import numpy as np
-from river import metrics
 
 import torch.utils.data as data_utils
 from torch.utils.data import DataLoader
@@ -10,8 +9,7 @@ from models.gin.piggyback_cgru import (
 from models.utils_scl.utils import *
 
 from models.gin.manager import *
-# TODO
-import pickle
+
 
 
 class GIN:
@@ -26,71 +24,76 @@ class GIN:
         lr: float = 0.01,
         seq_len: int = 5,
         stride: int = 1,
-        base_model= 'gru',
         mask_init='1s',
         input_size = 4,
         train_epochs: int = 10,
         train_verbose: bool = False,
         initial_task_id: int = 1,
         batch_size: int = 128,
-        save_column_freq: int = None,
         reset_data_points: bool = False,
-        threshold_fn = 'binarizer',
+        threshold_fn = 'sigmoid',
         hidden_size = 50,
         hidden_mult = 50,
         ensemble_batches = 50,
         ensemble_th = 1.1,
-        ensemble_mode = "classic",
+        ensemble_mode = "last",
         cGRU_weights=None,
         **kwargs,
     ):
         """
         Parameters
         ----------
-        column_class: default: !!!!.
-            The class that implements the column.
+        
+        model_class: default: PiggyBackGRU.
+            The type of cRNN used.
         device: default: None.
             Torch's device, if None its value is set to 'cpu'.
         lr: float, default: 0.01.
-            The learning rate value of single columns' Adam Optimizer.
+            The learning rate value of the Adam Optimizer.
         seq_len: int, default: 5.
             The length of the sliding window that builds the single sequences.
         stride: int, default: 1.
             The length of the sliding window's stride.
+        mask_init: str, default: "1s".
+            This parameter defines how new weights for the Piggymasks are initialized. "1s" initializes all weights to 1.
+            "uniform" initializes them with a Uniform probability distribution between -2e-2 and 2e-2.
         train_epochs: int, default: 10.
-            In case of anytime_learner=False, the training epochs to perform in learn_many method.
+            The training epochs to perform in learn_many method.
         train_verbose: bool, default:False.
             True if, during the learn_many execution, you want to print the metrics after each training epoch.
-        anytime_learner: bool, default: False.
-            If True the model learns data point by data point by data point. Otherwise, it buffers mini-batches of
-            data points to perform training.
-        acpnn: bool, default: False.
-            In case of anytime_learner = False is always True.
-            If True, the model is an Anytime cPNN. It considers only past temporal dependencies. The model
-            is a many_to_one model and each data point's prediction is associated to the first sequence in which
-            it appears. If False, the model considers both past and future temporal dependencies.
-            The model is a many_to_many model and each data point's prediction is the average prediction between all the
-            sequences in which it appears.
-        qcpnn: bool, default: False
-            If True the model is a QcPNN. After a concept drift, the last column is quantized.
         initial_task_id: int, default: 1.
             The id of the first task. It can be ignored.
         batch_size: int, default: 128.
             The training mini-batch size. If calling learn_one method, the model will accumulate batch_size data point
             before performing the training.
-        save_column_freq: int, default: None
-            The frequency at which the model stores the current state of the last column. Since the drift detector
-            may have a delay, before adding a new column, the stored state of the last column is restored. This avoids
-            to use a column that does not represent the concept.
         reset_data_points: bool, default: False.
-            In case of acpnn, when predicting the label of the data point at timestamp t, the model buffers the data
-            points from t-W to t-1 (where W is the sequence length). If True, after adding a new column, the buffer
-            is cleared. This way the model cannot predict the labels associated with the first W-1 data points
-            following the detected drift.
+            If True, after adding a drift, the buffer is cleared. This way the model cannot predict the labels 
+            associated with the first W-1 data points following the detected drift.
+        threshold_fn: str, default: "sigmoid".
+            The function to transform the real-weighted masks before applying them on the weights.
+            Functions can be "binarizer", "ternarizer, "sigmoid", "tanh".
+        hidden_size: int, default: 50.
+            The starting hidden size of the model's cRNN.
+        hidden_mult: int, default: 50.
+            The factor for the model expansion. Every expansion will add a hidden_mult amount to the current hidden size
+            of the model.
+        ensemble_batches: int, default: 50.
+            The number of batches used to train the model after a drift before choosing which option in the ensemble
+            to keep.
+        ensemble_th: float, default: 1.1.
+            The factor by which the expansion options need to outperform the mask only ones in order to be chosen.
+            Example: If the mask only option obtains a kappa score of 60%, the expansion one has to obtain
+            at least 66% to be selected.
+        ensemble_mode: str, default: "last".
+            This parameter defines how transfer learning is injected in the ensemble. "classic": no transfer learning;
+            "last": the ensemble contains two extra options that use the previous piggymasks instead of randomly
+            initialized ones.
+        cGRU_weights: dict of tensors, default: None.
+            Used to pass pre-initialized weights to the cRNN. If None they are initialized as usual
+        
         kwargs:
             Parameters of column_class.
         """
-        self.many_to_one = True
         
 
         self.columns_args = kwargs
@@ -100,7 +103,6 @@ class GIN:
         
         self.columns_args["device"] = device
         self.columns_args["lr"] = lr
-        self.columns_args["many_to_one"] = self.many_to_one
         self.columns_args["batch_size"] = batch_size
         self.columns_args["train_epochs"] = train_epochs
         self.columns_args["train_verbose"] = train_verbose
@@ -108,9 +110,7 @@ class GIN:
         self.columns_args["model_class"] = model_class
         self.columns_args["initial_task_id"] = initial_task_id
 
-        #self.columns = cPNNColumns(**self.columns_args) # CHANGE
         
-        self.base_model = base_model
         self.mask_init = mask_init
         self.ensemble_batches = ensemble_batches
         self.ensemble_th = ensemble_th
@@ -118,7 +118,6 @@ class GIN:
 
         self.seq_len = seq_len
         self.stride = stride
-        self.columns_perf = [metrics.CohenKappa()]
         self.task_ids = [initial_task_id]
         self.previous_data_points_anytime_inference = None
         self.previous_data_points_anytime_hidden = None
@@ -128,17 +127,13 @@ class GIN:
         self.x_batch = []
         self.y_batch = []
         self.batch_size = batch_size
-        self.save_column_freq = save_column_freq
         self.saved_columns = []
         self.cont = 1
-        self.train_cont = [0]
         self.reset_data_points = reset_data_points
-        self.predictions = {}
-        """if model_class==PiggyBackGRU:
-            self.model = PiggyBackGRU(hidden_size=self.hidden_size,base_model=base_model,seq_len=seq_len,mask_init=mask_init)
-        """
+        
+        
 
-        self.manager = CPGmanager(**self.columns_args,base_model=base_model,mask_init=mask_init,
+        self.manager = CPGmanager(**self.columns_args,mask_init=mask_init,
                                   input_size = input_size, 
                                   hidden_size = hidden_size, hidden_mult = hidden_mult,
                                   threshold_fn = threshold_fn,cGRU_weights = cGRU_weights,
@@ -245,29 +240,19 @@ class GIN:
             self.learn_many(np.array(self.x_batch), np.array(self.y_batch))
             self.x_batch = []
             self.y_batch = []
-        """if self.save_column_freq is not None:
-            if self.cont % self.save_column_freq == 0:
-                self.saved_columns.append(
-                    {
-                        "cont": self.cont,
-                        "column": pickle.loads(
-                            pickle.dumps(self.columns.columns[-1])
-                        ),
-                    }
-                )
-                self.saved_columns = self.saved_columns[-4:]"""
         return None
     
     def add_new_column(self, task_id=None):
         """
-        !!! Signal concept drift and create the 2 possible models
+        It signals the Manager a drift has occurred so that it can start the ensemble. Additionally
+        kept previous data points are removed and batches reset.
 
         Parameters
         ----------
         task_id: int, default: None
             The id of the new task. If None it increments the last one.
         """
-        #TODO aggiunto check su expansion e salvataggio bias
+        
         if self.manager.in_expansion:
             return
 
@@ -280,8 +265,7 @@ class GIN:
 
         if self.reset_data_points:
             self.reset_previous_data_points()
-        self.columns_perf.append(metrics.CohenKappa())
-        self.train_cont.append(0)
+        
         self.x_batch = []
         self.y_batch = []
     
@@ -321,7 +305,7 @@ class GIN:
 
         perf_train = self.manager.train(x,y)
 
-        self.train_cont[-1] = self.train_cont[-1] + 1
+        
         return perf_train
     
 
@@ -331,7 +315,7 @@ class GIN:
         self.previous_data_points_anytime_train = None
         self.previous_data_points_anytime_inference = None
         self.previous_data_points_anytime_hidden = None
-        self.predictions = {}
+        
     
     
     def _single_data_point_prep(

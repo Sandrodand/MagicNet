@@ -1,11 +1,6 @@
-import logging
+
 import torch
-import torch.nn as nn
-import torch.nn.functional as F
-import numpy as np
 from river import metrics
-from tqdm import tqdm
-from torch.autograd import Variable
 import copy
 import pickle
 
@@ -24,28 +19,25 @@ class CPGmanager(object):
         device=None,
         ensemble_batches = 50,
         lr=0.01,
-        many_to_one=True,
         input_size = 4,
         batch_size: int = 128,
         seq_len: int = 5,
         train_epochs: int = 10,
         train_verbose: bool = False,
-        threshold_fn = "binarizer",
-        base_model="gru",
+        threshold_fn = "sigmoid",
         initial_task_id = 1,
         mask_init='1s',
         hidden_size = 50,
         hidden_mult = 50,
         ensemble_th = 1.1,
         cGRU_weights = None,
-        ensemble_mode = "classic",
+        ensemble_mode = "last",
         **kwargs,
     ):
 
         kwargs["device"] = (
                 torch.device("cpu") if device is None else torch.device(device)
             )
-        kwargs["many_to_one"] = many_to_one
         self.device = kwargs["device"]
         self.model_class = model_class
         self.column_args = kwargs
@@ -58,21 +50,26 @@ class CPGmanager(object):
         self.train_verbose = train_verbose
         
         self.threshold_fn = threshold_fn
+
+        # Ensemble parameters
         self.ensemble = {}
         self.ensemble_masks = {}
         self.ensemble_optims = {}
         self.ensemble_batches = ensemble_batches
         self.ensemble_counter = 0
         self.ensemble_th = ensemble_th
-        #TODO aggiunto salvataggio scelte
-        self.ensemble_choices = []
-        self.biases = []
-
         self.ensemble_mode = ensemble_mode
         self.current_perf = {}
         self.in_expansion = False
-        self.piggymask_list = []
-        self.mask_list = {}
+        
+        # Stored choices and parameters
+        self.ensemble_choices = []
+        self.biases = []
+        self.piggymask_list = []  # Piggymasks of previous tasks
+
+
+        
+        self.mask_list = {}       # Masks used for freezing parameters
         self.criterion = torch.nn.CrossEntropyLoss(reduction="mean")
         self.criterion.to(self.device)
         self.hidden_mult = hidden_mult
@@ -86,11 +83,12 @@ class CPGmanager(object):
             self.model.train()
         
         if initial_task_id == 1:
-            #freeze the piggymasks for the first task since we are learning all of the weights
+            # Freeze the piggymasks for the first task since we are learning all of the weights
             for name, param in self.model.named_parameters():
                 if name.__contains__("mask"):
                     param.requires_grad = False
-
+            
+            # Create initial freeze masks
             self.mask_list[initial_task_id] = self.model.create_freezemask()
         
         self.model_optim = self._create_optimizer(self.model)
@@ -98,63 +96,77 @@ class CPGmanager(object):
     def _create_optimizer(self, model):
         return torch.optim.Adam(model.parameters(), lr=self.lr)
 
-    #TODO aggiunto per quando finisce il data stream, teoricamente mask_list dovrebbe essere ok
+    
     def store_masks_biases(self):
         self.piggymask_list.append(self.model.get_piggymasks())
         self.biases.append(pickle.loads(pickle.dumps(self.model.classifier[1].bias)))
 
     def add_new_column(self, task_id):
+
         # Freeze past by setting freeze masks to 1s
         self.curr_task_idx = task_id
         for mask in self.mask_list[task_id-1].values():
             mask.fill_(1)
+
         if task_id > 2:
             self.piggymask_list.append(self.model.get_piggymasks())
-        # TODO maschera vuota per il primo concetto e salvataggio soglie
+        
         else:
             self.piggymask_list.append([])
         self.biases.append(pickle.loads(pickle.dumps(self.model.classifier[1].bias)))
         self.in_expansion = True
         self.ensemble_counter = 0
 
+        # Reinitialize piggymasks
         self.model.reinit_piggymask(self.mask_init,freeze_masks = self.mask_list[task_id-1])
+
         # Create ensemble: 
-        # the first stays the same and we just train the piggymask
-        # the second expands
+        # "PiggyMask" stays the same and we just train the piggymask
+        # "Expand" expands the hidden size
 
         self.ensemble["PiggyMask"] = self.model
         self.ensemble["PiggyMask"].reinit_linear_bias()
+
         self.ensemble["Expand"] = PiggyBackGRU(seq_len=self.seq_len,mask_init= self.mask_init, input_size=self.input_size, hidden_size= self.model.hidden_size,threshold_fn=self.threshold_fn,device = self.device)
         self.ensemble["Expand"].load_state_dict(self.model.state_dict())
+
         self.ensemble_masks["PiggyMask"] = self.mask_list[task_id-1]
         self.ensemble_masks["Expand"] = self.ensemble["Expand"].expand_hidden(self.hidden_mult)
+
         self.current_perf["PiggyMask"] = metrics.CohenKappa()
         self.current_perf["Expand"] = metrics.CohenKappa()
+
         self.ensemble_optims["PiggyMask"] = self._create_optimizer(self.ensemble["PiggyMask"])
         self.ensemble_optims["Expand"] = self._create_optimizer(self.ensemble["Expand"])
+
+        # From the third concept the ensemble is enlarged based on the mode chosen
 
         if self.ensemble_mode != "classic" and task_id>2:
             self.ensemble["PiggyMask_last"] = copy.deepcopy(self.ensemble["PiggyMask"])
             if self.ensemble_mode == "last":
+                # Reinitialize piggymasks with the ones from the previous concept
                 self.ensemble["PiggyMask_last"].reinit_piggymask(self.mask_init,freeze_masks = self.mask_list[task_id-1],masks = self.piggymask_list[-1])
             else:
+                # Reinitialize piggymasks with the average of previously learned ones
                 new_masks = self.average_masks(self.piggymask_list)
                 self.ensemble["PiggyMask_last"].reinit_piggymask(self.mask_init,freeze_masks = self.mask_list[task_id-1],masks = new_masks)
             self.ensemble["Expand_last"] = copy.deepcopy(self.ensemble["PiggyMask_last"])
+
             self.ensemble_masks["PiggyMask_last"] = self.mask_list[task_id-1]
             self.ensemble_masks["Expand_last"] = self.ensemble["Expand_last"].expand_hidden(self.hidden_mult)
+
             self.current_perf["PiggyMask_last"] = metrics.CohenKappa()
             self.current_perf["Expand_last"] = metrics.CohenKappa()
+
             self.ensemble_optims["PiggyMask_last"] = self._create_optimizer(self.ensemble["PiggyMask_last"])
             self.ensemble_optims["Expand_last"] = self._create_optimizer(self.ensemble["Expand_last"])
+
         for model in self.ensemble.values():
             model.to(self.device)
         self.last_pred = {}
 
         
-        """
-        for name, param in self.ensemble["Expand"].named_parameters():
-            print(name, " ", param.size())"""
+       
         
     def average_masks(self,masklist):
         summed = {}
@@ -210,6 +222,9 @@ class CPGmanager(object):
         if self.train_verbose:
             print()
             print()
+
+        # Ensemble training counter and choice
+
         if self.in_expansion:
             self.ensemble_counter = self.ensemble_counter+1
         
@@ -244,7 +259,7 @@ class CPGmanager(object):
                 print("CHOSEN MODEL: ", best_model)
                 self.model = self.ensemble[best_model]
                 self.model_optim = self.ensemble_optims[best_model]
-                # TODO teoricamente il salvataggio delle maschere dovrebbe farlo qua quando sceglie il modello migliore
+                
                 self.mask_list[self.curr_task_idx] = self.ensemble_masks[best_model]
                 self.in_expansion = False
                 self.ensemble = {}
@@ -262,7 +277,7 @@ class CPGmanager(object):
         
         
         loss = customized_loss(outputs, y, self.criterion,self.model.device)
-        #optimizer = torch.optim.Adam(self.model.parameters(), lr=self.lr)
+        
         self.model.train()
         self.model_optim.zero_grad()
         loss.backward()
@@ -271,8 +286,7 @@ class CPGmanager(object):
 
         self.model_optim.step()
         outputs = self.model(x)
-        """if not self.loss_on_seq:
-            outputs = get_samples_outputs(outputs)"""
+        
         perf_train = {
             "loss": loss.item(),
             "accuracy": accuracy(outputs, y).item(),
@@ -291,7 +305,7 @@ class CPGmanager(object):
             outputs = model(x_i)
             
             loss = customized_loss(outputs, y_i, self.criterion,device=self.device)
-            #optimizer = torch.optim.Adam(model.parameters(), lr=self.lr)
+
             self.ensemble_optims[name].zero_grad()
             loss.backward()
 
@@ -304,7 +318,6 @@ class CPGmanager(object):
             temp_accuracy.update({name : accuracy(outputs, y_i).item()})
             temp_kappa.update({name : cohen_kappa(outputs, y_i, device=model.device).item()})
             
-        #self.current_perf = temp_kappa
         perf_train = {
             "loss": temp_loss,
             "accuracy": temp_accuracy,
@@ -313,8 +326,11 @@ class CPGmanager(object):
         return perf_train
         
         
-        
+    
     def delete_gradients(self,model, masks):
+        """
+            It sets the computed gradient for previous parameters of a given model to 0, effectively freezing them.
+        """
         for name, param in model.classifier.named_parameters():
             if name[2:] in masks:
                 mask = masks[name[2:]]
@@ -326,13 +342,17 @@ class CPGmanager(object):
 
 
     def predict_one(self, x):
+        """
+            Computes the model's prediction on the given input. If GIN is in ensemble phase it returns the prediction
+            of the current best-performing model.
+        """
         if self.in_expansion is False:
-            #self.model.eval()
+            
             pred = self.model(x)
             return pred
         
         for name, model in self.ensemble.items():
-            #model.eval()
+            
             self.last_pred[name] = model(x)
 
         
@@ -341,6 +361,7 @@ class CPGmanager(object):
         
         return pred
     
+
     def update_metrics(self, y):
         for name, pred in self.last_pred.items():
             with torch.no_grad():

@@ -25,15 +25,15 @@ def inverseSigmoid(tensor):
 class InferenceGIN:
     def __init__(self, model: GIN, ensemble_data_points=128 * 2):
         """
-        It implements a wrapper on a cPNN model to perform inference when the task label is not known.
-        It builds an ensemble that considers all the columns of a given cPNN model. On the i-th data point of the test
+        It implements a wrapper on a GIN model to perform inference when the task label is not known.
+        It builds an ensemble that considers all the saved PiggyMasks of a given GIN model. On the i-th data point of the test
         set,it considers the prediction made by the best-performing model from the first data point of the test set
         to the (i-1)-th.
 
         Parameters
         ----------
-        model: cPNN.
-            The cpNN model.
+        model: GIN.
+            The GIN model.
         ensemble_data_points: int, default: 128*2.
             Number of data points after which to choose the best model in the ensemble during the inference mode.
             Use -1 to keep the ensemble during the entire inference phase.
@@ -41,10 +41,8 @@ class InferenceGIN:
         self.model: GIN = model
         self.inference_model = copy.deepcopy(model)
         self._previous_data_points = None
-        # TODO tolto
-        #self.linear_biases = linear_biases
+        
         self.metrics = None
-        self.no_preparation = False
         self.selected = None
         self.models = []
         self.reset_previous_data_points()
@@ -56,7 +54,7 @@ class InferenceGIN:
 
     def predict_one(self, x, timestamp=-1):
         """
-        It performs prediction on a single data point. It returns the prediction of the current best-performing column
+        It performs prediction on a single data point. It returns the prediction of the current best-performing Mask
         from the first data point onwards.
 
         Parameters
@@ -89,7 +87,7 @@ class InferenceGIN:
 
     def update_inference(self, y, timestamp=-1):
         """
-        It updates the best-performing column using the real label. Call this method after predict_one on the same
+        It updates the best-performing Mask using the real label. Call this method after predict_one on the same
         data point.
 
         Parameters
@@ -135,7 +133,8 @@ class InferenceGIN:
             else:
                 weights[name] = getattr(self.model.manager.model.classifier[module],name)[:size[0],:size[1]]
             newmasks[name] = sigmoid(mask)
-        # TODO prendo bias dal manager
+
+        # Creates quantized models
         qcGRU = quantizedCGRU(weights = weights,masks = newmasks,  bias = self.model.manager.biases[0], device = self.model.device)
         models.append(torch.quantization.quantize_dynamic(qcGRU, conf, dtype=torch.qint8))
         weights = {}
@@ -172,7 +171,7 @@ class InferenceGIN:
         self.metrics = [
             metrics.CohenKappa() for _ in range(len(self.model.manager.mask_list))
         ]
-        #self.masks = [mask for mask in range(len(self.model.manager.piggymask_list))]
+        
         self.selected = len(self.models) - 1
         self.count = 0
 
