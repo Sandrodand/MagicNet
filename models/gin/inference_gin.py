@@ -6,23 +6,6 @@ import copy
 from models.gin.quantizedCGRU import quantizedCGRU
 
 
-def inverseSigmoid(tensor):
-    """
-    Computes the inverse sigmoid (logit) of all values in a PyTorch tensor.
-
-    Args:
-        tensor (torch.Tensor): Input tensor with values between 0 and 1 (exclusive).
-
-    Returns:
-        torch.Tensor: A tensor with the inverse sigmoid applied element-wise.
-    """
-    # Ensure values are within valid range for logit calculation
-    epsilon = 1e-6  # To prevent division by zero or log of zero
-    tensor = torch.clamp(tensor, epsilon, 1 - epsilon)
-    return torch.log(tensor / (1 - tensor))
-
-
-# TODO tolto biases
 class InferenceGIN:
     def __init__(self, model: GIN, ensemble_data_points=128 * 2):
         """
@@ -42,8 +25,6 @@ class InferenceGIN:
         self.model: GIN = model
         self.inference_model = copy.deepcopy(model)
         self._previous_data_points = None
-        # TODO tolto
-        # self.linear_biases = linear_biases
         self.metrics = None
         self.no_preparation = False
         self.selected = None
@@ -137,7 +118,6 @@ class InferenceGIN:
                     self.model.manager.model.classifier[module], name
                 )[: size[0], : size[1]]
             newmasks[name] = sigmoid(mask)
-        # TODO prendo bias dal manager
         qcGRU = quantizedCGRU(
             weights=weights,
             masks=newmasks,

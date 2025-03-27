@@ -10,6 +10,7 @@ import numpy as np
 
 from evaluation.buffer import Buffer
 from evaluation.learner_config import LearnerConfig
+from lab.lab_dynamic.plot_utils import model_name
 
 
 def make_dir(path):
@@ -482,9 +483,33 @@ class EvaluatePrequential:
                                 seq_len = f"_{self._eval[m.name + '_anytime']['alg'][iteration].ta_order + 1}"
                             break
             for i, m in enumerate(self.anytime_learners):
+                m_name = m.name.replace("_anytime", "").lower()
                 if m.gin:
-                    with open(os.path.join(self.path_write, f"choices_gin{self.suffix}.pkl"), "wb") as f:
-                        pickle.dump(self._eval[self.anytime_learners[i].name + '_anytime']['alg'][iteration].manager.ensemble_choices, f)
+                    with open(
+                        os.path.join(
+                            self.path_write, f"choices_{m_name}{self.suffix}.pkl"
+                        ),
+                        "wb",
+                    ) as f:
+                        pickle.dump(
+                            self._eval[self.anytime_learners[i].name + "_anytime"][
+                                "alg"
+                            ][iteration].manager.ensemble_choices,
+                            f,
+                        )
+                if m.dyn_cpnn:
+                    with open(
+                        os.path.join(
+                            self.path_write, f"choices_{m_name}{self.suffix}.pkl"
+                        ),
+                        "wb",
+                    ) as f:
+                        pickle.dump(
+                            self._eval[self.anytime_learners[i].name + "_anytime"][
+                                "alg"
+                            ][iteration].choices,
+                            f,
+                        )
         with open(
             os.path.join(
                 self.path_write,
@@ -675,11 +700,11 @@ class EvaluatePrequential:
 
                 if self.drift_detected:
                     self.detected_drifts[-1].append(idx)
-                    print()
+                    print(" " * 50, end="\r")
                     print("DETECTED DRIFT:", idx)
                     self._write_pickles(write_checkpoints=True)
                 if self.drift_supervised:
-                    print()
+                    print(" " * 50, end="\r")
                     self._write_pickles(write_checkpoints=True)
                     print("SUPERVISED DRIFT:", idx)
 
@@ -749,7 +774,9 @@ class EvaluatePrequential:
             if self.anytime_scenario:
                 for m in self.anytime_learners:
                     if m.gin:
-                        self._eval[m.name + "_anytime"]["alg"][iteration].manager.store_masks_biases()
+                        self._eval[m.name + "_anytime"]["alg"][
+                            iteration
+                        ].manager.store_masks_biases()
                     self.checkpoint[m.name + "_anytime"][iteration].append(
                         pickle.loads(
                             pickle.dumps(
@@ -761,7 +788,9 @@ class EvaluatePrequential:
             if self.periodic_scenario:
                 for m in self.anytime_learners + self.batch_learners:
                     if m.gin and not self.anytime_scenario:
-                        self._eval[m.name + "_batch"]["alg"][iteration].manager.store_masks_biases()
+                        self._eval[m.name + "_batch"]["alg"][
+                            iteration
+                        ].manager.store_masks_biases()
                     self.checkpoint[m.name + "_batch"][iteration].append(
                         pickle.loads(
                             pickle.dumps(

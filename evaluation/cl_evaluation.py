@@ -15,21 +15,26 @@ import torch
 
 
 def get_size(model):
-    torch.save(model.state_dict(), "temp.p")
-    size = os.path.getsize("temp.p") / 1e6
-    os.remove("temp.p")
+    sfx = str(hex(id(model)))
+    torch.save(model.state_dict(), f"temp{sfx}.p")
+    size = os.path.getsize(f"temp{sfx}.p") / 1e6
+    os.remove(f"temp{sfx}.p")
     return size
+
 
 def get_size_gin(models):
     size = 0
     for model in models[:-1]:
-        torch.save(model.state_dict(), "temp.p")
-        size = size +  os.path.getsize("temp.p") / 1e6
-        os.remove("temp.p")
-    torch.save(models[-1].state_dict(), "temp.p")
-    size2 = os.path.getsize("temp.p") / 1e6
-    os.remove("temp.p")
-    return (size,size2)
+        sfx = str(hex(id(model)))
+        torch.save(model.state_dict(), f"temp{sfx}.p")
+        size = size + os.path.getsize(f"temp{sfx}.p") / 1e6
+        os.remove(f"temp{sfx}.p")
+    sfx = str(hex(id(models[-1])))
+    torch.save(models[-1].state_dict(), f"temp{sfx}.p")
+    size2 = os.path.getsize(f"temp{sfx}.p") / 1e6
+    os.remove(f"temp{sfx}.p")
+    return (size, size2)
+
 
 class EvaluateContinualLearning:
     """
@@ -46,6 +51,7 @@ class EvaluateContinualLearning:
         batch_size,
         seq_len,
         suffix="",
+        print_suffix="",
         mode="local",
         delay=0,
     ):
@@ -68,6 +74,8 @@ class EvaluateContinualLearning:
              The temporal order of the learners that considers temporal dependence (ARF_TA, cPNN, cRNN, DYNcPNN, ...)
         suffix: str, default: ''
             The suffix to add the evaluation outputs' file names.
+        print_suffix: str, default: ''
+            The suffix to print in the logs during the evaluation.
         mode: str, default: 'local'.
             'local' if you are running the experiment on your local machine.
             'aws' if you are running them on aws machines. In this case, it will write the messages in a specific file.
@@ -116,6 +124,7 @@ class EvaluateContinualLearning:
         if suffix != "" and not suffix.startswith("_"):
             suffix = "_" + suffix
         self.suffix = suffix
+        self.print_suffix = "" if print_suffix is None else f", {print_suffix}"
         self.batch_size = batch_size
         self.seq_len = seq_len
 
@@ -189,18 +198,18 @@ class EvaluateContinualLearning:
         for model_dict in self.learners_config:
             model_name = model_dict.name
             model_name_perf = model_dict.name + "_anytime"
-            # TODO non serve piu
-            # if model_dict.gin:
-            #         linear_biases = self.retrieve_linear_biases(self.checkpoint[model_name_perf][iteration])
             for task_train, model_task in enumerate(
                 self.checkpoint[model_name_perf][iteration]
             ):
                 self.predictions[model_name][iteration].append([])
-                if model_dict.cpnn and not model_dict.gin and not model_dict.dyn_cpnn and model_dict.drift:
+                if (
+                    model_dict.cpnn
+                    and not model_dict.gin
+                    and not model_dict.dyn_cpnn
+                    and model_dict.drift
+                ):
                     model_task = InferenceCPNN(model_task)
                 if model_dict.gin:
-                    # TODO tolto biases, sono già nel manager
-                    #model_task = InferenceGIN(model_task, linear_biases= linear_biases)
                     model_task = InferenceGIN(model_task)
                     size = get_size_gin(model_task.models)
                 if model_dict.cpnn and not model_dict.drift:
@@ -213,7 +222,11 @@ class EvaluateContinualLearning:
                     update_inference = False
                     if model_dict.temp_dep:
                         model_task.reset_previous_data_points()
-                    if (model_dict.cpnn or model_dict.gin) and not model_dict.dyn_cpnn and model_dict.drift:
+                    if (
+                        (model_dict.cpnn or model_dict.gin)
+                        and not model_dict.dyn_cpnn
+                        and model_dict.drift
+                    ):
                         update_inference = True
                     elif model_dict.dyn_cpnn:
                         model_task.inference_mode(False)
@@ -229,7 +242,7 @@ class EvaluateContinualLearning:
                     ):
                         if count % 5 == 0:
                             print(
-                                f"{self.dataset_name}, {model_name}, train {task_train + 1}, test {task_test + 1}, "
+                                f"{self.dataset_name}, {model_name}{self.print_suffix}, train {task_train + 1}, test {task_test + 1}, "
                                 f"{'{:04d}'.format(count)}/{len(self.X[task_test])}",
                                 end=self.print_end,
                             )
@@ -255,7 +268,7 @@ class EvaluateContinualLearning:
                                     y_update, timestamp=idx - self.delay
                                 )
                     print(
-                        f"{self.dataset_name}, {model_name}, train {task_train + 1}, test {task_test + 1}, "
+                        f"{self.dataset_name}, {model_name}{self.print_suffix}, train {task_train + 1}, test {task_test + 1}, "
                         f"{'{:04d}'.format(count-1)}/{len(self.X[task_test])}",
                         end=self.print_end,
                     )
