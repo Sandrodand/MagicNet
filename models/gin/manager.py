@@ -39,6 +39,7 @@ class CPGmanager(object):
         ensemble_th = 1.1,
         cGRU_weights = None,
         ensemble_mode = "classic",
+        cap_sigmoid = True,
         **kwargs,
     ):
 
@@ -64,9 +65,9 @@ class CPGmanager(object):
         self.ensemble_batches = ensemble_batches
         self.ensemble_counter = 0
         self.ensemble_th = ensemble_th
-        #TODO aggiunto salvataggio scelte
         self.ensemble_choices = []
         self.biases = []
+        self.cap_sigmoid = cap_sigmoid
 
         self.ensemble_mode = ensemble_mode
         self.current_perf = {}
@@ -78,11 +79,12 @@ class CPGmanager(object):
         self.hidden_mult = hidden_mult
         self.curr_task_idx = initial_task_id
         self.counter = 0
-        
         self.last_pred = {}
 
         if model_class==PiggyBackGRU:
-            self.model = PiggyBackGRU(device= self.device,seq_len=seq_len,mask_init=mask_init,hidden_size=hidden_size,input_size=self.input_size, cGRU_weights=cGRU_weights, threshold_fn= threshold_fn)
+            self.model = PiggyBackGRU(input_size=self.input_size, device=self.device, hidden_size=hidden_size,
+                                      mask_init=mask_init, threshold_fn=threshold_fn, seq_len=seq_len,
+                                      cGRU_weights=cGRU_weights, cap_sigmoid=self.cap_sigmoid)
             self.model.train()
         
         if initial_task_id == 1:
@@ -98,7 +100,6 @@ class CPGmanager(object):
     def _create_optimizer(self, model):
         return torch.optim.Adam(model.parameters(), lr=self.lr)
 
-    #TODO aggiunto per quando finisce il data stream, teoricamente mask_list dovrebbe essere ok
     def store_masks_biases(self):
         self.piggymask_list.append(self.model.get_piggymasks())
         self.biases.append(pickle.loads(pickle.dumps(self.model.classifier[1].bias)))
@@ -110,7 +111,6 @@ class CPGmanager(object):
             mask.fill_(1)
         if task_id > 2:
             self.piggymask_list.append(self.model.get_piggymasks())
-        # TODO maschera vuota per il primo concetto e salvataggio soglie
         else:
             self.piggymask_list.append([])
         self.biases.append(pickle.loads(pickle.dumps(self.model.classifier[1].bias)))
@@ -124,7 +124,9 @@ class CPGmanager(object):
 
         self.ensemble["PiggyMask"] = self.model
         self.ensemble["PiggyMask"].reinit_linear_bias()
-        self.ensemble["Expand"] = PiggyBackGRU(seq_len=self.seq_len,mask_init= self.mask_init, input_size=self.input_size, hidden_size= self.model.hidden_size,threshold_fn=self.threshold_fn,device = self.device)
+        self.ensemble["Expand"] = PiggyBackGRU(input_size=self.input_size, device=self.device,
+                                               hidden_size=self.model.hidden_size, mask_init=self.mask_init,
+                                               threshold_fn=self.threshold_fn, seq_len=self.seq_len, cap_sigmoid=self.cap_sigmoid)
         self.ensemble["Expand"].load_state_dict(self.model.state_dict())
         self.ensemble_masks["PiggyMask"] = self.mask_list[task_id-1]
         self.ensemble_masks["Expand"] = self.ensemble["Expand"].expand_hidden(self.hidden_mult)
@@ -214,7 +216,6 @@ class CPGmanager(object):
             self.ensemble_counter = self.ensemble_counter+1
         
             if self.ensemble_counter == self.ensemble_batches:
-                # TODO add a threshold when deciding whether to expand
                 for name,item in self.current_perf.items():
                     print(name," performance: ",item)
                 if self.ensemble_mode == "classic" or self.curr_task_idx <= 2:
@@ -235,7 +236,6 @@ class CPGmanager(object):
                         best_model = bestexpand
                     else:
                         best_model = bestpiggy
-                #TODO aggiunto salvataggio scelte
                 self.ensemble_choices.append({
                     "cont": self.counter,
                     "choice": best_model,
@@ -244,7 +244,6 @@ class CPGmanager(object):
                 print("CHOSEN MODEL: ", best_model)
                 self.model = self.ensemble[best_model]
                 self.model_optim = self.ensemble_optims[best_model]
-                # TODO teoricamente il salvataggio delle maschere dovrebbe farlo qua quando sceglie il modello migliore
                 self.mask_list[self.curr_task_idx] = self.ensemble_masks[best_model]
                 self.in_expansion = False
                 self.ensemble = {}

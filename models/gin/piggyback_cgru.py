@@ -2,7 +2,9 @@
 # here we just
 import torch
 import torch.nn as nn
+import models.gin.activations
 import models.gin.piggyback_layers as nl
+from models.gin.activations import CappedSigmoid
 
 
 class PiggyBackGRU(nn.Module):
@@ -27,7 +29,8 @@ class PiggyBackGRU(nn.Module):
       	threshold=None,
         seq_len=5,
         mask_weights=[],
-        cGRU_weights = None
+        cGRU_weights = None,
+        cap_sigmoid = True
         ):
         super(PiggyBackGRU, self).__init__()
 
@@ -41,10 +44,10 @@ class PiggyBackGRU(nn.Module):
         self.threshold_fn = threshold_fn
         self.mask_scale = mask_scale
         self.mask_init = mask_init
-        
         self.seq_len=seq_len
         self.mask_weights=mask_weights
-        
+        self.cap_sigmoid = cap_sigmoid
+
         
         if mask_weights!=[]:
             self.GRU_mask_weights=mask_weights[0:4]
@@ -67,11 +70,12 @@ class PiggyBackGRU(nn.Module):
             nl.ElementWiseGRU(input_size=input_size, device=device, num_layers=num_layers, hidden_size=hidden_size, bias=bias, dropout=dropout,
                 bidirectional=bidirectional, training=training, mask_init=mask_init,
                 mask_scale=mask_scale, threshold_fn=threshold_fn, threshold=threshold,
-                seq_len=self.seq_len, GRU_mask_weights=self.GRU_mask_weights,GRU_weights = GRU_weights),
+                seq_len=self.seq_len, GRU_mask_weights=self.GRU_mask_weights,GRU_weights = GRU_weights,
+                              cap_sigmoid=cap_sigmoid),
 
             nl.ElementWiseLinear(in_features=hidden_size, out_features=output_size,
                 mask_init=mask_init, mask_scale=mask_scale, threshold_fn=threshold_fn,
-				        threshold=threshold, Linear_mask_weights=self.Linear_mask_weights,linear_weights = linear_weights)
+				        threshold=threshold, Linear_mask_weights=self.Linear_mask_weights,linear_weights = linear_weights, cap_sigmoid=cap_sigmoid)
         )
         self.classifier.to(self.device)
         # if self.device == "cuda":
@@ -118,14 +122,17 @@ class PiggyBackGRU(nn.Module):
       return freeze_mask
     
     def get_piggymasks(self):
-      sigmoid = nn.Sigmoid()
-      piggymasks = {}
+        if self.cap_sigmoid:
+            sigmoid = CappedSigmoid()
+        else:
+            sigmoid = nn.Sigmoid()
+        piggymasks = {}
       
-      piggymasks["mask_real_weight_ih"] = sigmoid(self.classifier[0].mask_real_weight_ih)
-      piggymasks["mask_real_weight_hh"] = sigmoid(self.classifier[0].mask_real_weight_hh)
-      piggymasks["mask_real_bias_ih_l0"] = sigmoid(self.classifier[0].mask_real_bias_ih_l0)
-      piggymasks["mask_real_bias_hh_l0"] = sigmoid(self.classifier[0].mask_real_bias_hh_l0)
-      piggymasks["mask_real_weight"] = sigmoid(self.classifier[1].mask_real_weight)
-      return piggymasks
+        piggymasks["mask_real_weight_ih"] = sigmoid(self.classifier[0].mask_real_weight_ih)
+        piggymasks["mask_real_weight_hh"] = sigmoid(self.classifier[0].mask_real_weight_hh)
+        piggymasks["mask_real_bias_ih_l0"] = sigmoid(self.classifier[0].mask_real_bias_ih_l0)
+        piggymasks["mask_real_bias_hh_l0"] = sigmoid(self.classifier[0].mask_real_bias_hh_l0)
+        piggymasks["mask_real_weight"] = sigmoid(self.classifier[1].mask_real_weight)
+        return piggymasks
 
         

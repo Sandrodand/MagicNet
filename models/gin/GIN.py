@@ -1,18 +1,7 @@
 import torch
-import numpy as np
-from river import metrics
-
 import torch.utils.data as data_utils
 from torch.utils.data import DataLoader
-from models.gin.piggyback_cgru import (
-    PiggyBackGRU,
-)
-from models.utils_scl.utils import *
-
 from models.gin.manager import *
-# TODO
-import pickle
-
 
 class GIN:
     """
@@ -42,6 +31,7 @@ class GIN:
         ensemble_th = 1.1,
         ensemble_mode = "classic",
         cGRU_weights=None,
+        cap_sigmoid=True,
         **kwargs,
     ):
         """
@@ -91,7 +81,8 @@ class GIN:
             Parameters of column_class.
         """
         self.many_to_one = True
-        
+        self.cap_sigmoid = True
+
 
         self.columns_args = kwargs
         if device is None:
@@ -143,7 +134,7 @@ class GIN:
                                   hidden_size = hidden_size, hidden_mult = hidden_mult,
                                   threshold_fn = threshold_fn,cGRU_weights = cGRU_weights,
                                   ensemble_batches = ensemble_batches, ensemble_th = ensemble_th,
-                                  ensemble_mode= ensemble_mode)
+                                  ensemble_mode= ensemble_mode, cap_sigmoid=cap_sigmoid)
         
 
     def get_seq_len(self):
@@ -267,7 +258,6 @@ class GIN:
         task_id: int, default: None
             The id of the new task. If None it increments the last one.
         """
-        #TODO aggiunto check su expansion e salvataggio bias
         if self.manager.in_expansion:
             return
 

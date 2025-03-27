@@ -12,123 +12,9 @@ from torch.nn.parameter import Parameter
 # importing gru math computation block
 from torch._VF import gru as _VF_gru
 from torch._VF import lstm as _VF_lstm
+from models.gin.activations import Binarizer, Ternarizer, Thresholder, inverseCappedSigmoid, inverseSigmoid, CAP_VALUE
 
 DEFAULT_THRESHOLD = 5e-3
-# class Binarizer(torch.autograd.Function):
-#     """Binarizes {0, 1} a real-valued tensor."""
-
-#     @staticmethod
-#     def forward(ctx, inputs, threshold=5e-3):
-#         outputs = inputs.clone()
-#         outputs[inputs <= threshold] = 0
-#         outputs[inputs > threshold] = 1
-#         return outputs
-
-#     @staticmethod
-#     def backward(ctx, grad_output):
-#         return grad_output, None  
-
-
-class Binarizer(nn.Module):
-    """Binarizes {0, 1} a real-valued tensor based on a threshold."""
-
-    def __init__(self, threshold=5e-3):
-        super(Binarizer, self).__init__()
-        self.threshold = threshold
-
-    def forward(self, inputs):
-        # Clone inputs to avoid modifying the original tensor
-        outputs = inputs.clone()
-        # Apply the binarization
-        outputs[inputs <= self.threshold] = 0
-        outputs[inputs > self.threshold] = 1
-        return outputs
-
-
-
-class BinarizerFunction(torch.autograd.Function):
-    @staticmethod
-    def forward(ctx, inputs, threshold):
-        outputs = inputs.clone()
-        outputs[inputs < -threshold] = -1
-        outputs[inputs > threshold] = 1
-        return outputs
-
-    @staticmethod
-    def backward(ctx, grad_output):
-        # Straight-through estimator: pass gradients through unchanged
-        return grad_output, None  # None for the threshold
-
-class Binarizer(nn.Module):
-    """Binarizer {0, 1} a real-valued tensor."""
-
-    def __init__(self, threshold=5e-3):
-        super(Binarizer, self).__init__()
-        self.threshold = threshold       
-
-    def forward(self, inputs):
-        return BinarizerFunction.apply(inputs, self.threshold)
-
-
-class TernarizerFunction(torch.autograd.Function):
-    @staticmethod
-    def forward(ctx, inputs, threshold):
-        outputs = inputs.clone()
-        outputs.fill_(0)
-        outputs[inputs < -threshold] = -1
-        outputs[inputs > threshold] = 1
-        return outputs
-
-    @staticmethod
-    def backward(ctx, grad_output):
-        # Straight-through estimator: pass gradients through unchanged
-        return grad_output, None  # None for the threshold
-
-class Ternarizer(nn.Module):
-    """Ternarizes {-1, 0, 1} a real-valued tensor."""
-
-    def __init__(self, threshold=5e-3):
-        super(Ternarizer, self).__init__()
-        self.threshold = threshold       
-
-    def forward(self, inputs):
-        return TernarizerFunction.apply(inputs, self.threshold)
-
-def linear(input):
-    return input
-    
-class Thresholder(nn.Module):
-    """Ternarizes {-1, 0, 1} a real-valued tensor."""
-
-    def __init__(self, function = "ternarizer"):
-        super(Thresholder, self).__init__()
-        self.threshold = 5e-3
-        if function == "linear":
-            self.threshold_fn = linear
-        elif function == "sigmoid":
-            self.threshold_fn = nn.Sigmoid()
-        elif function == "relu":
-            self.threshold_fn = nn.LeakyReLU(negative_slope=0.05)
-        elif function == "tanh":
-            self.threshold_fn = nn.Tanh()
-
-    def forward(self, inputs):
-        return self.threshold_fn(inputs)
-    
-def inverseSigmoid(tensor):
-    """
-    Computes the inverse sigmoid (logit) of all values in a PyTorch tensor.
-    
-    Args:
-        tensor (torch.Tensor): Input tensor with values between 0 and 1 (exclusive).
-    
-    Returns:
-        torch.Tensor: A tensor with the inverse sigmoid applied element-wise.
-    """
-    # Ensure values are within valid range for logit calculation
-    epsilon = 1e-6  # To prevent division by zero or log of zero
-    tensor = torch.clamp(tensor, epsilon, 1 - epsilon)
-    return torch.log(tensor / (1 - tensor))
 
 def GRUBlockMath(input, hn, weight_thresholded_ih, weight_thresholded_hh, bias_ih_l0,
               bias_hh_l0, batch_size=None, bias=True, num_layers=1, dropout=0.0, training=False, bidirectional= False, batch_first=False):
@@ -362,7 +248,8 @@ class ElementWiseGRU(nn.Module):
       	threshold=5e-3,
         seq_len=10,
         GRU_mask_weights=[],
-        GRU_weights = None
+        GRU_weights = None,
+        cap_sigmoid = True
     ):
         super(ElementWiseGRU, self).__init__()
 
@@ -384,6 +271,12 @@ class ElementWiseGRU(nn.Module):
         self.threshold=threshold
         self.seq_len=seq_len,
         self.GRU_mask_weights=GRU_mask_weights
+        self.cap_sigmoid = cap_sigmoid
+        if cap_sigmoid:
+            self.inverse_thresholder = inverseCappedSigmoid
+        else:
+            self.inverse_thresholder = inverseSigmoid
+
 
         # this hn should be defined at the begining and will be updated during the training.
         # I should ask from TA about configuration of hn. if it needed to be updated after each batch or it initialized to zero each iteration
@@ -424,8 +317,11 @@ class ElementWiseGRU(nn.Module):
         elif threshold_fn == 'ternarizer':
             self.threshold_fn = Ternarizer()
         else:
-            self.threshold_fn = Thresholder(function=threshold_fn)
-            self.mask_scale = 1
+            self.threshold_fn = Thresholder(function=threshold_fn, cap_sigmoid=self.cap_sigmoid)
+            if not self.cap_sigmoid:
+                self.mask_scale = 1
+            else:
+                self.mask_scale= CAP_VALUE
 
         self.initialize_piggymask(mask_init,self.mask_scale)
 
@@ -469,10 +365,10 @@ class ElementWiseGRU(nn.Module):
     
     def reinit_piggymask(self, mask_init, mask_scale,freeze_masks = None,masks = None):
         if masks is not None:
-            self.mask_real_weight_ih = Parameter(inverseSigmoid(masks["mask_real_weight_ih"]))
-            self.mask_real_weight_hh = Parameter(inverseSigmoid(masks["mask_real_weight_hh"]))
-            self.mask_real_bias_ih_l0 = Parameter(inverseSigmoid(masks["mask_real_bias_ih_l0"]))
-            self.mask_real_bias_hh_l0 = Parameter(inverseSigmoid(masks["mask_real_bias_hh_l0"]))
+            self.mask_real_weight_ih = Parameter(self.inverse_thresholder(masks["mask_real_weight_ih"]))
+            self.mask_real_weight_hh = Parameter(self.inverse_thresholder(masks["mask_real_weight_hh"]))
+            self.mask_real_bias_ih_l0 = Parameter(self.inverse_thresholder(masks["mask_real_bias_ih_l0"]))
+            self.mask_real_bias_hh_l0 = Parameter(self.inverse_thresholder(masks["mask_real_bias_hh_l0"]))
         else:
             self.initialize_piggymask(mask_init,mask_scale,freeze_masks = freeze_masks)
     
@@ -624,7 +520,8 @@ class ElementWiseLinear(nn.Module):
         threshold_fn='binarizer',
         threshold=5e-3,
         Linear_mask_weights=[],
-        linear_weights = None
+        linear_weights = None,
+        cap_sigmoid=True,
         ):
         super(ElementWiseLinear, self).__init__()
         self.in_features = in_features
@@ -633,6 +530,11 @@ class ElementWiseLinear(nn.Module):
         self.mask_scale = mask_scale
         self.mask_init = mask_init
         self.Linear_mask_weights=Linear_mask_weights
+        self.cap_sigmoid=cap_sigmoid
+        if self.cap_sigmoid:
+            self.inverse_thresholder = inverseCappedSigmoid
+        else:
+            self.inverse_thresholder = inverseSigmoid
         if threshold is None:
             threshold = DEFAULT_THRESHOLD
         self.info = {
@@ -661,14 +563,16 @@ class ElementWiseLinear(nn.Module):
         elif threshold_fn == 'ternarizer':
             self.threshold_fn = Ternarizer()
         else:
-            self.threshold_fn = Thresholder(function=threshold_fn)
-            self.mask_scale = 1
+            self.threshold_fn = Thresholder(function=threshold_fn, cap_sigmoid=self.cap_sigmoid)
+            if self.cap_sigmoid:
+                self.mask_scale = CAP_VALUE
+            else:
+                self.mask_scale = 1
         self.initialize_piggymask(mask_init,self.mask_scale,Linear_mask_weights)
-
 
     def reinit_piggymask(self, mask_init, mask_scale,freeze_masks = None, masks = None):
         if masks is not None:
-            self.mask_real_weight = Parameter(inverseSigmoid(masks["mask_real_weight"]))
+            self.mask_real_weight = Parameter(self.inverse_thresholder(masks["mask_real_weight"]))
         else:
             self.initialize_piggymask(mask_init,mask_scale,freeze_mask = freeze_masks)
     
