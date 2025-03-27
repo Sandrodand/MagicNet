@@ -3,6 +3,7 @@ import torch.utils.data as data_utils
 from torch.utils.data import DataLoader
 from models.gin.manager import *
 
+
 class GIN:
     """
     Class that implements all the cPNN structure.
@@ -15,21 +16,21 @@ class GIN:
         lr: float = 0.01,
         seq_len: int = 5,
         stride: int = 1,
-        base_model= 'gru',
-        mask_init='1s',
-        input_size = 4,
+        base_model="gru",
+        mask_init="1s",
+        input_size=4,
         train_epochs: int = 10,
         train_verbose: bool = False,
         initial_task_id: int = 1,
         batch_size: int = 128,
         save_column_freq: int = None,
         reset_data_points: bool = False,
-        threshold_fn = 'binarizer',
-        hidden_size = 50,
-        hidden_mult = 50,
-        ensemble_batches = 50,
-        ensemble_th = 1.1,
-        ensemble_mode = "classic",
+        threshold_fn="binarizer",
+        hidden_size=50,
+        hidden_mult=50,
+        ensemble_batches=50,
+        ensemble_th=1.1,
+        ensemble_mode="classic",
         cGRU_weights=None,
         cap_sigmoid=True,
         **kwargs,
@@ -83,12 +84,11 @@ class GIN:
         self.many_to_one = True
         self.cap_sigmoid = True
 
-
         self.columns_args = kwargs
         if device is None:
             device = "cpu"
         self.device = device
-        
+
         self.columns_args["device"] = device
         self.columns_args["lr"] = lr
         self.columns_args["many_to_one"] = self.many_to_one
@@ -99,8 +99,8 @@ class GIN:
         self.columns_args["model_class"] = model_class
         self.columns_args["initial_task_id"] = initial_task_id
 
-        #self.columns = cPNNColumns(**self.columns_args) # CHANGE
-        
+        # self.columns = cPNNColumns(**self.columns_args) # CHANGE
+
         self.base_model = base_model
         self.mask_init = mask_init
         self.ensemble_batches = ensemble_batches
@@ -129,18 +129,24 @@ class GIN:
             self.model = PiggyBackGRU(hidden_size=self.hidden_size,base_model=base_model,seq_len=seq_len,mask_init=mask_init)
         """
 
-        self.manager = CPGmanager(**self.columns_args,base_model=base_model,mask_init=mask_init,
-                                  input_size = input_size, 
-                                  hidden_size = hidden_size, hidden_mult = hidden_mult,
-                                  threshold_fn = threshold_fn,cGRU_weights = cGRU_weights,
-                                  ensemble_batches = ensemble_batches, ensemble_th = ensemble_th,
-                                  ensemble_mode= ensemble_mode, cap_sigmoid=cap_sigmoid)
-        
+        self.manager = CPGmanager(
+            **self.columns_args,
+            base_model=base_model,
+            mask_init=mask_init,
+            input_size=input_size,
+            hidden_size=hidden_size,
+            hidden_mult=hidden_mult,
+            threshold_fn=threshold_fn,
+            cGRU_weights=cGRU_weights,
+            ensemble_batches=ensemble_batches,
+            ensemble_th=ensemble_th,
+            ensemble_mode=ensemble_mode,
+            cap_sigmoid=cap_sigmoid,
+        )
 
     def get_seq_len(self):
         return self.seq_len
-    
-    
+
     def _cut_in_sequences(self, x, y):
         seqs_features = []
         seqs_targets = []
@@ -207,9 +213,14 @@ class GIN:
             break
         y = torch.tensor(y)
         return x, y, y_seq
-    
 
-    def learn_one(self, x: np.array, y: int, previous_data_points: np.array = None, timestamp: int = -1):
+    def learn_one(
+        self,
+        x: np.array,
+        y: int,
+        previous_data_points: np.array = None,
+        timestamp: int = -1,
+    ):
         """
         It trains GIN on a single data point. The training is performed after filling
         up a mini_batch containing batch_size data points.
@@ -225,8 +236,7 @@ class GIN:
             If None, it uses the last seq_len-1 points seen during the last calls of the method.
             It returns None if the model has not seen yet seq_len-1 data points and previous_data_points is None.
         """
-        
-        
+
         self.x_batch.append(x)
         self.y_batch.append(y)
         self.cont += 1
@@ -248,7 +258,7 @@ class GIN:
                 )
                 self.saved_columns = self.saved_columns[-4:]"""
         return None
-    
+
     def add_new_column(self, task_id=None):
         """
         !!! Signal concept drift and create the 2 possible models
@@ -267,19 +277,17 @@ class GIN:
         self.task_ids.append(task_id)
         self.manager.add_new_column(task_id)
 
-
         if self.reset_data_points:
             self.reset_previous_data_points()
         self.columns_perf.append(metrics.CohenKappa())
         self.train_cont.append(0)
         self.x_batch = []
         self.y_batch = []
-    
 
     def learn_many(self, x: np.array, y: np.array) -> dict:
         """
         It trains GIN on a single mini-batch of data points.
-        
+
 
         Parameters
         ----------
@@ -295,13 +303,12 @@ class GIN:
             The following metrics are computed: accuracy, loss, kappa, kappa_temporal.
             For each metric the dict contains a list of epochs' values.
         """
-       
+
         x = np.array(x)
         y = list(y)
         if x.shape[0] < self.get_seq_len():
             return {}
 
-        
         if self.previous_data_points_batch_train is not None:
             x = np.concatenate([self.previous_data_points_batch_train, x], axis=0)
             y = np.concatenate([[i for i in range(self.seq_len - 1)], y], axis=0)
@@ -309,11 +316,10 @@ class GIN:
         x, y, _ = self._load_batch(x, y)
         y = y[self.seq_len - 1 :]
 
-        perf_train = self.manager.train(x,y)
+        perf_train = self.manager.train(x, y)
 
         self.train_cont[-1] = self.train_cont[-1] + 1
         return perf_train
-    
 
     def reset_previous_data_points(self):
         self.previous_data_points_batch_train = None
@@ -322,8 +328,7 @@ class GIN:
         self.previous_data_points_anytime_inference = None
         self.previous_data_points_anytime_hidden = None
         self.predictions = {}
-    
-    
+
     def _single_data_point_prep(
         self, x, previous_data_points_param: np.array = None, inference=True
     ):
@@ -349,20 +354,15 @@ class GIN:
                 self.previous_data_points_anytime_hidden = previous_data_points
             return None
         previous_data_points = np.concatenate([previous_data_points, x])
-        x = self._convert_to_tensor_dataset(previous_data_points).to(
-            self.device
-        )
+        x = self._convert_to_tensor_dataset(previous_data_points).to(self.device)
         previous_data_points = previous_data_points[1:]
         if inference:
             self.previous_data_points_anytime_inference = previous_data_points
         else:
             self.previous_data_points_anytime_hidden = previous_data_points
         return x
-    
 
-    def predict_one(
-        self, x: np.array, previous_data_points: np.array = None
-    ):
+    def predict_one(self, x: np.array, previous_data_points: np.array = None):
         """
         It performs prediction on a single data point.
 
@@ -386,7 +386,6 @@ class GIN:
             pred, _ = get_pred_from_outputs(self.manager.predict_one(x))
             pred = int(pred[-1].detach().cpu().numpy())
         return pred
-    
 
     def get_state_dict(self):
         return self.manager.get_state_dict()

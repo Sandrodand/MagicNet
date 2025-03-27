@@ -1,6 +1,8 @@
 import torch
 from torch import nn as nn, Tensor
+
 CAP_VALUE = 13.8
+
 
 class BinarizerFunction(torch.autograd.Function):
     @staticmethod
@@ -59,7 +61,8 @@ def linear(input):
 
 class Thresholder(nn.Module):
     """Ternarizes {-1, 0, 1} a real-valued tensor."""
-    def __init__(self, function = "ternarizer", cap_sigmoid=True):
+
+    def __init__(self, function="ternarizer", cap_sigmoid=True):
         super(Thresholder, self).__init__()
         self.threshold = 5e-3
         if function == "linear":
@@ -83,7 +86,7 @@ class CappedSigmoid(nn.Module):
         super(CappedSigmoid, self).__init__()
         self.cap_value = float(cap_value)
 
-    def forward(self, x:Tensor) -> Tensor:
+    def forward(self, x: Tensor) -> Tensor:
         cap_tensor = torch.tensor(self.cap_value, dtype=x.dtype, device=x.device)
         ones = torch.ones_like(x)
         return torch.where(x.ge(cap_tensor), ones, torch.sigmoid(x))
@@ -106,7 +109,7 @@ def inverseCappedSigmoid(tensor):
     return torch.where(
         logit.ge(CAP_VALUE),
         torch.tensor(CAP_VALUE, dtype=logit.dtype, device=logit.device),
-        logit
+        logit,
     )
 
 
