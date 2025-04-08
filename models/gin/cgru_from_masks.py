@@ -4,7 +4,7 @@ import numpy as np
 from torch.nn.parameter import Parameter
 
 
-class quantizedCGRU(nn.Module):
+class cGRUFromMasks(nn.Module):
     def __init__(
         self,
         weights,
@@ -12,7 +12,7 @@ class quantizedCGRU(nn.Module):
         masks,
         device="cpu",
     ):
-        super(quantizedCGRU, self).__init__()
+        super(cGRUFromMasks, self).__init__()
 
         # PARAMETERS
         self.input_size = weights["weight_ih"].size()[1]

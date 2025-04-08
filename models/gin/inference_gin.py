@@ -3,11 +3,11 @@ import numpy as np
 import torch
 from river import metrics
 import copy
-from models.gin.quantizedCGRU import quantizedCGRU
+from models.gin.cgru_from_masks import cGRUFromMasks
 
 
 class InferenceGIN:
-    def __init__(self, model: GIN, ensemble_data_points=128 * 2):
+    def __init__(self, model: GIN, ensemble_data_points=128 * 2, quantize=False):
         """
         It implements a wrapper on a cPNN model to perform inference when the task label is not known.
         It builds an ensemble that considers all the columns of a given cPNN model. On the i-th data point of the test
@@ -33,6 +33,7 @@ class InferenceGIN:
         self.ensemble_data_points = ensemble_data_points
         self.count = 0
         self.predictions = {}
+        self.quantize = quantize
 
     def predict_one(self, x, timestamp=-1):
         """
@@ -118,15 +119,15 @@ class InferenceGIN:
                     self.model.manager.model.classifier[module], name
                 )[: size[0], : size[1]]
             newmasks[name] = sigmoid(mask)
-        qcGRU = quantizedCGRU(
+        cGRU = cGRUFromMasks(
             weights=weights,
             masks=newmasks,
             bias=self.model.manager.biases[0],
             device=self.model.device,
         )
-        models.append(
-            torch.quantization.quantize_dynamic(qcGRU, conf, dtype=torch.qint8)
-        )
+        if self.quantize:
+            cGRU = torch.quantization.quantize_dynamic(cGRU, conf, dtype=torch.qint8)
+        models.append(cGRU)
         weights = {}
         newmasks = {}
         for biases, masks in zip(
@@ -149,15 +150,12 @@ class InferenceGIN:
                     )[: size[0], : size[1]]
                 newmasks[name] = mask
 
-            qcGRU = quantizedCGRU(
+            cGRU = cGRUFromMasks(
                 weights=weights, masks=newmasks, bias=biases, device=self.model.device
             )
-            models.append(
-                torch.quantization.quantize_dynamic(qcGRU, conf, dtype=torch.qint8)
-            )
-            weights = {}
-        weights = {}
-        qcGRU = None
+            if self.quantize:
+                cGRU = torch.quantization.quantize_dynamic(cGRU, conf, dtype=torch.qint8)
+            models.append(cGRU)
         models.append(self.model.manager.model)
 
         return models

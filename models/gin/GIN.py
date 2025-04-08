@@ -33,6 +33,7 @@ class GIN:
         ensemble_mode="classic",
         cGRU_weights=None,
         cap_sigmoid=True,
+        expand_last=False,
         **kwargs,
     ):
         """
@@ -142,6 +143,7 @@ class GIN:
             ensemble_th=ensemble_th,
             ensemble_mode=ensemble_mode,
             cap_sigmoid=cap_sigmoid,
+            expand_last=expand_last
         )
 
     def get_seq_len(self):
@@ -269,6 +271,7 @@ class GIN:
             The id of the new task. If None it increments the last one.
         """
         if self.manager.in_expansion:
+            self.manager.add_new_column(None)
             return
 
         if task_id is None:
@@ -389,3 +392,11 @@ class GIN:
 
     def get_state_dict(self):
         return self.manager.get_state_dict()
+
+    def get_size(self):
+        if self.manager.in_expansion:
+            size = 0
+            for k in self.manager.ensemble:
+                size += compute_model_size(self.manager.ensemble[k])
+            return size
+        return compute_model_size(self.manager.model)

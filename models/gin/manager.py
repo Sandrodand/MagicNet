@@ -9,6 +9,7 @@ from torch.autograd import Variable
 import copy
 import pickle
 
+from evaluation.evaluation_utils import compute_model_size
 from models.gin.piggyback_cgru import (
     PiggyBackGRU,
 )
@@ -40,6 +41,7 @@ class CPGmanager(object):
         cGRU_weights=None,
         ensemble_mode="classic",
         cap_sigmoid=True,
+        expand_last=False,
         **kwargs,
     ):
         kwargs["device"] = (
@@ -65,6 +67,7 @@ class CPGmanager(object):
         self.ensemble_counter = 0
         self.ensemble_th = ensemble_th
         self.ensemble_choices = []
+        self.ensemble_perf = []
         self.biases = []
         self.cap_sigmoid = cap_sigmoid
 
@@ -79,6 +82,7 @@ class CPGmanager(object):
         self.curr_task_idx = initial_task_id
         self.counter = 0
         self.last_pred = {}
+        self.expand_last = False
 
         if model_class == PiggyBackGRU:
             self.model = PiggyBackGRU(
@@ -109,9 +113,23 @@ class CPGmanager(object):
     def store_masks_biases(self):
         self.piggymask_list.append(self.model.get_piggymasks())
         self.biases.append(pickle.loads(pickle.dumps(self.model.classifier[1].bias)))
+        if self.in_expansion:
+            self._decide_best_model()
 
     def add_new_column(self, task_id):
         # Freeze past by setting freeze masks to 1s
+        if self.in_expansion:
+            self.ensemble_choices.append(
+                {
+                    "cont": self.counter,
+                    "choice": "ignore",
+                    "current_perf": None,
+                    "chosen_model_size": None
+                }
+            )
+            self.ensemble_choices = sorted(self.ensemble_choices, key=lambda x: x["cont"])
+            return
+        self.ensemble_perf.append([])
         self.curr_task_idx = task_id
         for mask in self.mask_list[task_id - 1].values():
             mask.fill_(1)
@@ -168,20 +186,21 @@ class CPGmanager(object):
                     freeze_masks=self.mask_list[task_id - 1],
                     masks=new_masks,
                 )
-            self.ensemble["Expand_last"] = copy.deepcopy(
-                self.ensemble["PiggyMask_last"]
-            )
+            if self.expand_last:
+                self.ensemble["Expand_last"] = copy.deepcopy(
+                    self.ensemble["PiggyMask_last"]
+                )
+                self.ensemble_masks["Expand_last"] = self.ensemble[
+                    "Expand_last"
+                ].expand_hidden(self.hidden_mult)
+                self.current_perf["Expand_last"] = metrics.CohenKappa()
+                self.ensemble_optims["Expand_last"] = self._create_optimizer(
+                    self.ensemble["Expand_last"]
+                )
             self.ensemble_masks["PiggyMask_last"] = self.mask_list[task_id - 1]
-            self.ensemble_masks["Expand_last"] = self.ensemble[
-                "Expand_last"
-            ].expand_hidden(self.hidden_mult)
             self.current_perf["PiggyMask_last"] = metrics.CohenKappa()
-            self.current_perf["Expand_last"] = metrics.CohenKappa()
             self.ensemble_optims["PiggyMask_last"] = self._create_optimizer(
                 self.ensemble["PiggyMask_last"]
-            )
-            self.ensemble_optims["Expand_last"] = self._create_optimizer(
-                self.ensemble["Expand_last"]
             )
         for model in self.ensemble.values():
             model.to(self.device)
@@ -216,6 +235,60 @@ class CPGmanager(object):
             summed[name] = torch.div(mask, denom[name])
         return summed
 
+    def _decide_best_model(self):
+        for name, item in self.current_perf.items():
+            print(name, " performance: ", item)
+        if self.ensemble_mode == "classic" or self.curr_task_idx <= 2:
+            if (
+                    self.current_perf["Expand"].get()
+                    > self.ensemble_th * self.current_perf["PiggyMask"].get()
+            ):
+                best_model = "Expand"
+            else:
+                best_model = "PiggyMask"
+        else:
+            if (
+                    self.current_perf["PiggyMask"].get()
+                    > self.current_perf["PiggyMask_last"].get()
+            ):
+                bestpiggy = "PiggyMask"
+            else:
+                bestpiggy = "PiggyMask_last"
+            bestexpand = "Expand"
+            if self.expand_last:
+                if (
+                        self.current_perf["Expand"].get()
+                        > self.current_perf["Expand_last"].get()
+                ):
+                    bestexpand = "Expand"
+                else:
+                    bestexpand = "Expand_last"
+            if (
+                    self.current_perf[bestexpand].get()
+                    > self.ensemble_th * self.current_perf[bestpiggy].get()
+            ):
+                best_model = bestexpand
+            else:
+                best_model = bestpiggy
+        self.ensemble_choices.append(
+            {
+                "cont": self.counter-self.ensemble_batches,
+                "choice": best_model,
+                "final_perf": {k: self.current_perf[k].get() for k in self.current_perf},
+                "chosen_model_size": compute_model_size(self.ensemble[best_model])
+            }
+        )
+        self.ensemble_choices = sorted(self.ensemble_choices, key=lambda x: x["cont"])
+        print("CHOSEN MODEL: ", best_model)
+        self.model = self.ensemble[best_model]
+        self.model_optim = self.ensemble_optims[best_model]
+        self.mask_list[self.curr_task_idx] = self.ensemble_masks[best_model]
+        self.in_expansion = False
+        self.ensemble = {}
+        self.ensemble_masks = {}
+        self.ensemble_optims = {}
+        self.current_perf = {}
+
     def train(self, x, y):
         perf_train = {
             "accuracy": [],
@@ -225,7 +298,7 @@ class CPGmanager(object):
         }
 
         for e in range(1, self.train_epochs + 1):
-            if self.in_expansion == False:
+            if not self.in_expansion:
                 perf_epoch = self._fit(x, y)
             else:
                 perf_epoch = self._fit_ensemble(x, y)
@@ -253,56 +326,9 @@ class CPGmanager(object):
             print()
         if self.in_expansion:
             self.ensemble_counter = self.ensemble_counter + 1
-
+            self.ensemble_perf[-1].append({k: self.current_perf[k].get() for k in self.current_perf})
             if self.ensemble_counter == self.ensemble_batches:
-                for name, item in self.current_perf.items():
-                    print(name, " performance: ", item)
-                if self.ensemble_mode == "classic" or self.curr_task_idx <= 2:
-                    if (
-                        self.current_perf["Expand"].get()
-                        > self.ensemble_th * self.current_perf["PiggyMask"].get()
-                    ):
-                        best_model = "Expand"
-                    else:
-                        best_model = "PiggyMask"
-                else:
-                    if (
-                        self.current_perf["PiggyMask"].get()
-                        > self.current_perf["PiggyMask_last"].get()
-                    ):
-                        bestpiggy = "PiggyMask"
-                    else:
-                        bestpiggy = "PiggyMask_last"
-                    if (
-                        self.current_perf["Expand"].get()
-                        > self.current_perf["Expand_last"].get()
-                    ):
-                        bestexpand = "Expand"
-                    else:
-                        bestexpand = "Expand_last"
-                    if (
-                        self.current_perf[bestexpand].get()
-                        > self.ensemble_th * self.current_perf[bestpiggy].get()
-                    ):
-                        best_model = bestexpand
-                    else:
-                        best_model = bestpiggy
-                self.ensemble_choices.append(
-                    {
-                        "cont": self.counter,
-                        "choice": best_model,
-                        "current_perf": self.current_perf.copy(),
-                    }
-                )
-                print("CHOSEN MODEL: ", best_model)
-                self.model = self.ensemble[best_model]
-                self.model_optim = self.ensemble_optims[best_model]
-                self.mask_list[self.curr_task_idx] = self.ensemble_masks[best_model]
-                self.in_expansion = False
-                self.ensemble = {}
-                self.ensemble_masks = {}
-                self.ensemble_optims = {}
-                self.current_perf = {}
+                self._decide_best_model()
         self.counter += 1
         return perf_train
 

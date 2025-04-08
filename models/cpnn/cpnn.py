@@ -5,6 +5,7 @@ import numpy as np
 from river import metrics
 import warnings
 
+from evaluation.evaluation_utils import compute_model_size
 from models.cpnn.cpnn_columns import cPNNColumns
 from models.utils_scl.utils import (
     customized_loss,
@@ -692,3 +693,6 @@ class cPNN:
 
     def get_hidden(self, x, column_id=None):
         return self.columns.get_hidden(x, column_id)
+
+    def get_size(self):
+        return compute_model_size(self.columns)
