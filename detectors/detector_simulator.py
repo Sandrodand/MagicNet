@@ -7,26 +7,37 @@ class DetectorSimulator:
     It simulates a detector with a specific precision and recall
     """
 
-    def __init__(self, precision, recall, dataset, min_delay=0, max_delay=128 * 50, margin=None):
+    def __init__(
+        self, detections=None, precision=None, recall=None, dataset=None, min_delay=0, max_delay=128 * 50, margin=None
+    ):
         """
 
         Parameters
         ----------
+        detections: list
+            If not None, represents the timestamps of the detections.
         precision: float
-            The desired precision of the detector.
+            If detections is None, it represents the desired precision of the detector.
         recall: float
-            The desired recall of the detector.
+            If detections is None, it represents the desired recall of the detector.
         dataset: str or path
-            The path containing the csv representing the entire data stream.
+            If detections is None, it represents the path containing the csv representing the entire data stream.
         min_delay: int, default: 0
-            The minimum number of data points following a true drift after which to generate the true positives.
+            If detections is None, it represents the minimum number of data points following a true drift after
+             which to generate the true positives.
         max_delay: int, default: 128*50
-            The maximum number of data points following a true drift after which to generate the true positives.
+            If detections is None, it represents the maximum number of data points following a true drift after
+            which to generate the true positives.
         margin: int, default: None
-            Additional data points following a real drift and the max_delay from which to generate the false positives.
-            If None it considers max_delay * 2.
+            If detections is None, it represents the additional data points following a real drift and the max_delay
+            from which to generate the false positives. If None it considers max_delay * 2.
         """
         self.cont = 0
+        if detections is not None:
+            self.drifts = detections
+            return
+        precision = min(1.0, precision)
+        recall = min(1.0, recall)
         self.precision = precision
         self.recall = recall
         self.min_delay = min_delay
@@ -38,14 +49,21 @@ class DetectorSimulator:
 
         self.dataset_len = 0
         df = pd.read_csv(f"{dataset}.csv")
-        self.drifts_real = sorted([df[df["task"]==i].iloc[0].name for i in list(df["task"].unique())[1:]])
+        self.drifts_real = sorted(
+            [df[df["task"] == i].iloc[0].name for i in list(df["task"].unique())[1:]]
+        )
         self.dataset_len = len(df)
-        self.correct_drifts_ranges = [(d+self.min_delay, d + self.max_delay) for d in self.drifts_real]
+        self.correct_drifts_ranges = [
+            (d + self.min_delay, d + self.max_delay) for d in self.drifts_real
+        ]
 
         self.wrong_drifts_ranges = (
             [(self.max_delay + self.margin, self.drifts_real[0])]
             + [
-                (self.drifts_real[i] + self.max_delay + self.margin, self.drifts_real[i + 1])
+                (
+                    self.drifts_real[i] + self.max_delay + self.margin,
+                    self.drifts_real[i + 1],
+                )
                 for i in range(len(self.drifts_real) - 1)
             ]
             + [(self.drifts_real[-1] + self.max_delay + self.margin, self.dataset_len)]

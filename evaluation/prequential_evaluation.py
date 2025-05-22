@@ -10,7 +10,6 @@ import numpy as np
 
 from evaluation.buffer import Buffer
 from evaluation.learner_config import LearnerConfig
-from lab.lab_dynamic.plot_utils import model_name
 
 
 def make_dir(path):
@@ -202,6 +201,9 @@ class EvaluatePrequential:
                 self._perf[name + scenario]["time"] = [
                     [] for i in range(0, self._iterations)
                 ]
+                self._perf[name + scenario]["memory"] = [
+                    [] for i in range(0, self._iterations)
+                ]
                 if scenario == "_anytime":
                     metric_periods = ["all", "task"]
                 else:
@@ -262,6 +264,8 @@ class EvaluatePrequential:
                 )
             if self.drift_detected and model.drift:
                 self._eval[model_name]["alg"][iteration].add_new_column()
+                if model.cpnn or model.magic:
+                    self._perf[model_name]["memory"][iteration].append(self._eval[model_name]["alg"][iteration].get_size())
             if model.cpnn:
                 y_hat = self._eval[model_name]["alg"][iteration].predict_one(
                     x_, timestamp=idx
@@ -455,6 +459,9 @@ class EvaluatePrequential:
                         )
                     if m.drift and add_new_column:
                         self._eval[model_name]["alg"][iteration].add_new_column()
+                        if m.cpnn or m.magic:
+                            self._perf[model_name]["memory"][iteration].append(
+                                self._eval[model_name]["alg"][iteration].get_size())
                 batch.append((x, y))
                 i += 1
 
@@ -484,7 +491,7 @@ class EvaluatePrequential:
                             break
             for i, m in enumerate(self.anytime_learners):
                 m_name = m.name.replace("_anytime", "").lower()
-                if m.gin:
+                if m.magic:
                     with open(
                         os.path.join(
                             self.path_write, f"choices_{m_name}{self.suffix}.pkl"
@@ -495,6 +502,18 @@ class EvaluatePrequential:
                             self._eval[self.anytime_learners[i].name + "_anytime"][
                                 "alg"
                             ][iteration].manager.ensemble_choices,
+                            f,
+                        )
+                    with open(
+                        os.path.join(
+                            self.path_write, f"ensemble_perf_{m_name}{self.suffix}.pkl"
+                        ),
+                        "wb",
+                    ) as f:
+                        pickle.dump(
+                            self._eval[self.anytime_learners[i].name + "_anytime"][
+                                "alg"
+                            ][iteration].manager.ensemble_perf,
                             f,
                         )
                 if m.dyn_cpnn:
@@ -655,6 +674,14 @@ class EvaluatePrequential:
             self.drift_detected = False
             drift_detector = pickle.loads(pickle.dumps(self.drift_detector))
             self.detected_drifts.append([])
+            for model in self.anytime_learners:
+                model_name = model.name + "_anytime"
+                if model.cpnn or model.magic:
+                    self._perf[model_name]["memory"][iteration].append(self._eval[model_name]["alg"][iteration].get_size())
+            for model in self.batch_learners:
+                model_name = model.name + "_batch"
+                if model.cpnn or model.magic:
+                    self._perf[model_name]["memory"][iteration].append(self._eval[model_name]["alg"][iteration].get_size())
             for idx, (x, y) in enumerate(stream):
                 if (idx + 1) % 100 == 0:
                     print(
@@ -773,7 +800,7 @@ class EvaluatePrequential:
 
             if self.anytime_scenario:
                 for m in self.anytime_learners:
-                    if m.gin:
+                    if m.magic:
                         self._eval[m.name + "_anytime"]["alg"][
                             iteration
                         ].manager.store_masks_biases()
@@ -787,7 +814,7 @@ class EvaluatePrequential:
 
             if self.periodic_scenario:
                 for m in self.anytime_learners + self.batch_learners:
-                    if m.gin and not self.anytime_scenario:
+                    if m.magic and not self.anytime_scenario:
                         self._eval[m.name + "_batch"]["alg"][
                             iteration
                         ].manager.store_masks_biases()

@@ -25,12 +25,22 @@ def set_seq_len(dataset):
 def set_hidden_size(dataset, base_rnn):
     dataset = dataset.lower()
     if "gru" in base_rnn.lower():
-        return 100
+        if "weather" in dataset:
+            return 25
+        if "air_quality" in dataset:
+            return 25
+        if "energy" in dataset:
+            return 25
+        if "sine" in dataset:
+            return 50
+        return 50
     return 50
+
 
 def set_gru_hidden_size(dataset):
     dataset = dataset.lower()
     return 100
+
 
 def set_batch_size(dataset):
     dataset = dataset.lower()

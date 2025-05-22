@@ -2,16 +2,18 @@ import os
 import pickle
 from river import forest, stream
 from river import tree
+from river.drift import ADWIN
 
+from detectors.sentinel import Sentinel
 from models.crnn.cgru import cGRULinear
 from models.crnn.clstm import cLSTMLinear
 from models.cpnn.cpnn import cPNN
-from models.gin.GIN import GIN
+from models.magic.magic_net import MagicNet
 from models.sml.temporally_augmented_classifier import TemporallyAugmentedClassifier
 
 
 class Config:
-    def __init__(self, base_learner = "clstm"):
+    def __init__(self, base_learner="clstm"):
         self.ta_order = 9
         self.seq_len = 10
         self.num_features = 2
@@ -39,7 +41,7 @@ class Config:
     def set_params(
         self,
         ta_order=None,
-        device = None,
+        device=None,
         seq_len=None,
         num_features=None,
         batch_size=None,
@@ -50,11 +52,11 @@ class Config:
         delta=None,
         output_size=2,
         hidden_size=None,
-        threshold_fn = None,
+        threshold_fn=None,
         mask_init=None,
-        hidden_mult = None,
-        ensemble_batches = None,
-        ensemble_th = None
+        hidden_mult=None,
+        ensemble_batches=None,
+        ensemble_th=None,
     ):
         if ta_order is not None:
             self.ta_order = ta_order
@@ -90,8 +92,6 @@ class Config:
             self.ensemble_batches = ensemble_batches
         if ensemble_th is not None:
             self.ensemble_th = ensemble_th
-
-
 
     def initialize_callback(self, eval_cl_, eval_preq_):
         self.eval_cl = eval_cl_
@@ -134,16 +134,6 @@ class Config:
             num_old_labels=self.ta_order,
         )
 
-    def create_arf_ta_features(self):
-        return TemporallyAugmentedFeaturesClassifier(
-            base_learner=self.create_arf(), ta_order=self.ta_order
-        )
-
-    def create_arf_ta_features_no_adwin(self):
-        return TemporallyAugmentedFeaturesClassifier(
-            base_learner=self.create_arf_no_adwin(), ta_order=self.ta_order
-        )
-
     def create_qcpnn_clstm(self):
         return cPNN(
             column_class=cLSTMLinear,
@@ -158,7 +148,6 @@ class Config:
             output_size=self.output_size,
             hidden_size=self.hidden_size,
         )
-
 
     def create_acpnn_clstm(self):
         return cPNN(
@@ -205,25 +194,24 @@ class Config:
             hidden_size=self.hidden_size,
         )
 
-
-    def create_GIN_cGRU_last(self):
-        return GIN(
+    def create_magic_net(self):
+        return MagicNet(
             device="cpu",
             seq_len=self.seq_len,
-            train_verbose=False,
-            acpnn=True,
-            mask_init = self.mask_init,
-            ensemble_batches = self.ensemble_batches,
-            batch_size=self.batch_size,
-            threshold_fn = self.threshold_fn,
-            save_column_freq=None,
+            mask_init=self.mask_init,
             input_size=self.num_features,
-            output_size=self.output_size,
+            train_verbose=False,
+            batch_size=self.batch_size,
+            threshold_fn=self.threshold_fn,
             hidden_size=self.hidden_size,
-            hidden_mult = self.hidden_mult,
-            ensemble_th = self.ensemble_th,
-            ensemble_mode = "last",
-            cGRU_weights = self.base_learner.get_base_learner()
+            hidden_mult=self.hidden_mult,
+            ensemble_batches=self.ensemble_batches,
+            ensemble_th=self.ensemble_th,
+            ensemble_mode="last",
+            cGRU_weights=self.base_learner.get_base_learner(),
+            output_size=self.output_size,
+            cap_sigmoid=True,
+            expand_last=False,
         )
 
     def callback_func_cl(self, **kwargs):
@@ -271,6 +259,59 @@ class Config:
             str(self.path) + ".csv", converters=self.converters, target="target"
         )
 
+    def create_drift_detector(self):
+        path = self.path.lower()
+        if "future" in path:
+            if "air_quality" in path:
+                return Sentinel(
+                    ADWIN(delta=self.delta, clock=1),
+                    training_data_points=-1,
+                    evaluator=self.create_arf_no_adwin(),
+                )
+            if "weather" in path:
+                return Sentinel(
+                    ADWIN(delta=self.delta, clock=1),
+                    training_data_points=50 * 128,
+                    evaluator=self.create_arf_no_adwin(),
+                )
+            if "energy" in path:
+                return Sentinel(
+                    ADWIN(delta=self.delta, clock=1),
+                    training_data_points=50 * 128,
+                    evaluator=self.create_arf_no_adwin(),
+                )
+        # not future
+        if "air_quality" in path:
+            return Sentinel(
+                ADWIN(delta=self.delta, clock=1),
+                training_data_points=-1,
+                evaluator=self.create_arf_no_adwin(),
+            )
+        if "weather" in path:
+            return Sentinel(
+                ADWIN(delta=self.delta, clock=1),
+                training_data_points=50 * 128,
+                evaluator=self.create_arf_ta_features_no_adwin(),
+            )
+        if "energy" in path:
+            return Sentinel(
+                ADWIN(delta=self.delta, clock=1),
+                training_data_points=50 * 128,
+                evaluator=self.create_arf_ta_features_no_adwin(),
+            )
+        if "sine" in path:
+            return Sentinel(
+                ADWIN(delta=self.delta, clock=1),
+                training_data_points=50 * 128,
+                evaluator=self.create_arf_no_adwin(),
+            )
+        # else
+        return Sentinel(
+            ADWIN(delta=self.delta, clock=1),
+            training_data_points=50 * 128,
+            evaluator=self.create_arf_no_adwin(),
+        )
+
 
 class BaseLearner:
     def __init__(self, learner_func):
@@ -287,3 +328,6 @@ class BaseLearner:
 
     def reset_base_learner(self):
         self.base_learner = self.learner_func()
+
+    def set_base_learner(self, base_learner):
+        self.base_learner = base_learner

@@ -1,9 +1,11 @@
 import os
 import pickle
+
 from river import forest, stream
 from river import tree
 from river.drift import ADWIN
 
+from detectors.sentinel import Sentinel
 from models.crnn.clstm import cLSTMLinear
 from models.cpnn.cpnn import cPNN
 from models.sml.temporally_augmented_classifier import TemporallyAugmentedClassifier
@@ -214,3 +216,11 @@ class BaseLearner:
 
 def create_iter_csv():
     return stream.iter_csv(str(PATH) + ".csv", converters=CONVERTERS, target="target")
+
+
+def create_drift_detector():
+    if "weather" in PATH or "air_quality" or "pen_digits" in PATH:
+        return Sentinel(ADWIN(delta=DELTA, clock=1))
+    else:
+        return Sentinel(ADWIN(delta=DELTA, clock=1), training_data_points=50 * 128)
+

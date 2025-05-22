@@ -10,7 +10,7 @@ def compute_model_size(model):
     return size
 
 
-def compute_gin_size(models):
+def compute_magic_size(models):
     size = 0
     for model in models[:-1]:
         sfx = str(hex(id(model)))

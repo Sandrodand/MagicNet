@@ -17,7 +17,7 @@ class LearnerConfig:
         smart: bool = False,
         dyn_cpnn: bool = False,
         temp_dep: bool = True,
-        gin: bool = False
+        magic: bool = False,
     ):
         """
 
@@ -44,6 +44,8 @@ class LearnerConfig:
             True if the model is a Dynamic cPNN. False otherwise.
         temp_dep: bool, default: True.
             True if the model manages the temporal dependence (Temporal Augmentation or RNN).
+        magic: bool, default: False.
+            True if the model is MAGIC Net.
         """
         self.name = name
         self.model = model
@@ -54,11 +56,11 @@ class LearnerConfig:
         self.smart = smart
         self.dyn_cpnn = dyn_cpnn
         self.temp_dep = temp_dep
-        self.gin = gin
+        self.magic = magic
 
         if self.dyn_cpnn:
             self.cpnn = True
-        if self.cpnn or self.gin:
+        if self.cpnn or self.magic:
             self.numeric = True
         else:
             self.smart = False
@@ -68,7 +70,7 @@ class LearnerConfig:
             else:
                 self.numeric = False
         if self.drift is None:
-            if self.cpnn or self.gin:
+            if self.cpnn or self.magic:
                 self.drift = True
             elif self.batch_learner:
                 self.drift = True

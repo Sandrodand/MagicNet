@@ -9,31 +9,10 @@ from river import metrics
 
 from evaluation.buffer import Buffer
 from evaluation.learner_config import LearnerConfig
+from evaluation.evaluation_utils import compute_model_size, compute_magic_size
 from models.cpnn.inference_cpnn import InferenceCPNN
-from models.gin.inference_gin import InferenceGIN
+from models.magic.inference_magic import InferenceMagicNet
 import torch
-
-
-def get_size(model):
-    sfx = str(hex(id(model)))
-    torch.save(model.state_dict(), f"temp{sfx}.p")
-    size = os.path.getsize(f"temp{sfx}.p") / 1e6
-    os.remove(f"temp{sfx}.p")
-    return size
-
-
-def get_size_gin(models):
-    size = 0
-    for model in models[:-1]:
-        sfx = str(hex(id(model)))
-        torch.save(model.state_dict(), f"temp{sfx}.p")
-        size = size + os.path.getsize(f"temp{sfx}.p") / 1e6
-        os.remove(f"temp{sfx}.p")
-    sfx = str(hex(id(models[-1])))
-    torch.save(models[-1].state_dict(), f"temp{sfx}.p")
-    size2 = os.path.getsize(f"temp{sfx}.p") / 1e6
-    os.remove(f"temp{sfx}.p")
-    return (size, size2)
 
 
 class EvaluateContinualLearning:
@@ -204,14 +183,14 @@ class EvaluateContinualLearning:
                 self.predictions[model_name][iteration].append([])
                 if (
                     model_dict.cpnn
-                    and not model_dict.gin
+                    and not model_dict.magic
                     and not model_dict.dyn_cpnn
                     and model_dict.drift
                 ):
                     model_task = InferenceCPNN(model_task)
-                if model_dict.gin:
-                    model_task = InferenceGIN(model_task)
-                    size = get_size_gin(model_task.models)
+                if model_dict.magic:
+                    model_task = InferenceMagicNet(model_task)
+                    size = compute_magic_size(model_task.models)
                 if model_dict.cpnn and not model_dict.drift:
                     model_task.columns.to(torch.device("cpu"))
 
@@ -223,7 +202,7 @@ class EvaluateContinualLearning:
                     if model_dict.temp_dep:
                         model_task.reset_previous_data_points()
                     if (
-                        (model_dict.cpnn or model_dict.gin)
+                        (model_dict.cpnn or model_dict.magic)
                         and not model_dict.dyn_cpnn
                         and model_dict.drift
                     ):
@@ -249,7 +228,7 @@ class EvaluateContinualLearning:
                         count += 1
                         if not model_dict.numeric:
                             x = self._convert_to_dict(x)
-                        if model_dict.cpnn or model_dict.gin:
+                        if model_dict.cpnn or model_dict.magic:
                             y_hat = model_task.predict_one(x, timestamp=idx)
                         else:
                             y_hat = model_task.predict_one(x)
@@ -282,18 +261,18 @@ class EvaluateContinualLearning:
                     self.metric_tables[model_name]["time"][iteration][-1].append(
                         (end - start).microseconds
                     )
-                if not model_dict.cpnn and not model_dict.gin:
+                if not model_dict.cpnn and not model_dict.magic:
                     size = 0
-                elif model_dict.gin:
+                elif model_dict.magic:
                     size = size
                 elif model_dict.dyn_cpnn:
                     size = np.sum(
-                        [get_size(m.model.columns) for m in model_task.models]
+                        [compute_model_size(m.model.columns) for m in model_task.models]
                     )
                 elif not model_dict.drift:
-                    size = get_size(model_task.columns)
+                    size = compute_model_size(model_task.columns)
                 else:
-                    size = get_size(model_task.model.columns)
+                    size = compute_model_size(model_task.model.columns)
                 self.metric_tables[model_name]["memory"][iteration][-1] = size
             if self.print_end == "\r":
                 print()
