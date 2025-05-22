@@ -20,16 +20,18 @@ def get_size(model):
     os.remove("temp.p")
     return size
 
+
 def get_size_gin(models):
     size = 0
     for model in models[:-1]:
         torch.save(model.state_dict(), "temp.p")
-        size = size +  os.path.getsize("temp.p") / 1e6
+        size = size + os.path.getsize("temp.p") / 1e6
         os.remove("temp.p")
     torch.save(models[-1].state_dict(), "temp.p")
     size2 = os.path.getsize("temp.p") / 1e6
     os.remove("temp.p")
-    return (size,size2)
+    return (size, size2)
+
 
 class EvaluateContinualLearning:
     """
@@ -196,11 +198,16 @@ class EvaluateContinualLearning:
                 self.checkpoint[model_name_perf][iteration]
             ):
                 self.predictions[model_name][iteration].append([])
-                if model_dict.cpnn and not model_dict.gin and not model_dict.dyn_cpnn and model_dict.drift:
+                if (
+                    model_dict.cpnn
+                    and not model_dict.gin
+                    and not model_dict.dyn_cpnn
+                    and model_dict.drift
+                ):
                     model_task = InferenceCPNN(model_task)
                 if model_dict.gin:
                     # TODO tolto biases, sono già nel manager
-                    #model_task = InferenceGIN(model_task, linear_biases= linear_biases)
+                    # model_task = InferenceGIN(model_task, linear_biases= linear_biases)
                     model_task = InferenceGIN(model_task)
                     size = get_size_gin(model_task.models)
                 if model_dict.cpnn and not model_dict.drift:
@@ -213,7 +220,11 @@ class EvaluateContinualLearning:
                     update_inference = False
                     if model_dict.temp_dep:
                         model_task.reset_previous_data_points()
-                    if (model_dict.cpnn or model_dict.gin) and not model_dict.dyn_cpnn and model_dict.drift:
+                    if (
+                        (model_dict.cpnn or model_dict.gin)
+                        and not model_dict.dyn_cpnn
+                        and model_dict.drift
+                    ):
                         update_inference = True
                     elif model_dict.dyn_cpnn:
                         model_task.inference_mode(False)

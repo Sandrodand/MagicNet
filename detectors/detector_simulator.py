@@ -7,7 +7,9 @@ class DetectorSimulator:
     It simulates a detector with a specific precision and recall
     """
 
-    def __init__(self, precision, recall, dataset, min_delay=0, max_delay=128 * 50, margin=None):
+    def __init__(
+        self, precision, recall, dataset, min_delay=0, max_delay=128 * 50, margin=None
+    ):
         """
 
         Parameters
@@ -38,14 +40,21 @@ class DetectorSimulator:
 
         self.dataset_len = 0
         df = pd.read_csv(f"{dataset}.csv")
-        self.drifts_real = sorted([df[df["task"]==i].iloc[0].name for i in list(df["task"].unique())[1:]])
+        self.drifts_real = sorted(
+            [df[df["task"] == i].iloc[0].name for i in list(df["task"].unique())[1:]]
+        )
         self.dataset_len = len(df)
-        self.correct_drifts_ranges = [(d+self.min_delay, d + self.max_delay) for d in self.drifts_real]
+        self.correct_drifts_ranges = [
+            (d + self.min_delay, d + self.max_delay) for d in self.drifts_real
+        ]
 
         self.wrong_drifts_ranges = (
             [(self.max_delay + self.margin, self.drifts_real[0])]
             + [
-                (self.drifts_real[i] + self.max_delay + self.margin, self.drifts_real[i + 1])
+                (
+                    self.drifts_real[i] + self.max_delay + self.margin,
+                    self.drifts_real[i + 1],
+                )
                 for i in range(len(self.drifts_real) - 1)
             ]
             + [(self.drifts_real[-1] + self.max_delay + self.margin, self.dataset_len)]

@@ -9,10 +9,10 @@ from models.gin.quantizedCGRU import quantizedCGRU
 def inverseSigmoid(tensor):
     """
     Computes the inverse sigmoid (logit) of all values in a PyTorch tensor.
-    
+
     Args:
         tensor (torch.Tensor): Input tensor with values between 0 and 1 (exclusive).
-    
+
     Returns:
         torch.Tensor: A tensor with the inverse sigmoid applied element-wise.
     """
@@ -20,6 +20,7 @@ def inverseSigmoid(tensor):
     epsilon = 1e-6  # To prevent division by zero or log of zero
     tensor = torch.clamp(tensor, epsilon, 1 - epsilon)
     return torch.log(tensor / (1 - tensor))
+
 
 # TODO tolto biases
 class InferenceGIN:
@@ -41,7 +42,7 @@ class InferenceGIN:
         self.model: GIN = model
         self.inference_model = copy.deepcopy(model)
         self._previous_data_points = None
-        
+
         self.metrics = None
         self.selected = None
         self.models = []
@@ -49,8 +50,6 @@ class InferenceGIN:
         self.ensemble_data_points = ensemble_data_points
         self.count = 0
         self.predictions = {}
-
-
 
     def predict_one(self, x, timestamp=-1):
         """
@@ -112,11 +111,10 @@ class InferenceGIN:
             self.metrics = [self.metrics[self.selected]]
             self.selected = 0
             self.predictions = {}
-        
 
     def prepare_masks(self):
         sigmoid = torch.nn.Sigmoid()
-        conf = {torch.nn.GRU,torch.nn.Linear}
+        conf = {torch.nn.GRU, torch.nn.Linear}
         models = []
         if len(self.model.manager.mask_list) == 1:
             return [self.model.manager.model]
@@ -129,40 +127,59 @@ class InferenceGIN:
             else:
                 module = 0
             if len(size) == 1:
-                weights[name] = getattr(self.model.manager.model.classifier[module],name)[:size[0]]
+                weights[name] = getattr(
+                    self.model.manager.model.classifier[module], name
+                )[: size[0]]
             else:
-                weights[name] = getattr(self.model.manager.model.classifier[module],name)[:size[0],:size[1]]
+                weights[name] = getattr(
+                    self.model.manager.model.classifier[module], name
+                )[: size[0], : size[1]]
             newmasks[name] = sigmoid(mask)
 
         # Creates quantized models
-        qcGRU = quantizedCGRU(weights = weights,masks = newmasks,  bias = self.model.manager.biases[0], device = self.model.device)
-        models.append(torch.quantization.quantize_dynamic(qcGRU, conf, dtype=torch.qint8))
+        qcGRU = quantizedCGRU(
+            weights=weights,
+            masks=newmasks,
+            bias=self.model.manager.biases[0],
+            device=self.model.device,
+        )
+        models.append(
+            torch.quantization.quantize_dynamic(qcGRU, conf, dtype=torch.qint8)
+        )
         weights = {}
         newmasks = {}
-        for biases, masks in zip(self.model.manager.biases[1:], self.model.manager.piggymask_list[1:]):
+        for biases, masks in zip(
+            self.model.manager.biases[1:], self.model.manager.piggymask_list[1:]
+        ):
             for name, mask in masks.items():
-                name = name.replace("mask_real_","")
+                name = name.replace("mask_real_", "")
                 size = mask.size()
                 if name == "weight":
                     module = 1
                 else:
                     module = 0
                 if len(size) == 1:
-                    weights[name] = getattr(self.model.manager.model.classifier[module],name)[:size[0]]
+                    weights[name] = getattr(
+                        self.model.manager.model.classifier[module], name
+                    )[: size[0]]
                 else:
-                    weights[name] = getattr(self.model.manager.model.classifier[module],name)[:size[0],:size[1]]
+                    weights[name] = getattr(
+                        self.model.manager.model.classifier[module], name
+                    )[: size[0], : size[1]]
                 newmasks[name] = mask
 
-            qcGRU = quantizedCGRU(weights = weights,masks = newmasks,  bias = biases, device = self.model.device)
-            models.append(torch.quantization.quantize_dynamic(qcGRU, conf, dtype=torch.qint8))
+            qcGRU = quantizedCGRU(
+                weights=weights, masks=newmasks, bias=biases, device=self.model.device
+            )
+            models.append(
+                torch.quantization.quantize_dynamic(qcGRU, conf, dtype=torch.qint8)
+            )
             weights = {}
         weights = {}
         qcGRU = None
         models.append(self.model.manager.model)
-        
-        return models
 
-        
+        return models
 
     def initialize(self):
         self.predictions = {}
@@ -171,7 +188,7 @@ class InferenceGIN:
         self.metrics = [
             metrics.CohenKappa() for _ in range(len(self.model.manager.mask_list))
         ]
-        
+
         self.selected = len(self.models) - 1
         self.count = 0
 

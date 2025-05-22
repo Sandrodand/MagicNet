@@ -28,9 +28,11 @@ def set_hidden_size(dataset, base_rnn):
         return 100
     return 50
 
+
 def set_gru_hidden_size(dataset):
     dataset = dataset.lower()
     return 100
+
 
 def set_batch_size(dataset):
     dataset = dataset.lower()

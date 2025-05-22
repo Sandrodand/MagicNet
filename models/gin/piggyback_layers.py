@@ -1,4 +1,3 @@
-
 import torch
 from math import sqrt
 import numpy as np
@@ -30,7 +29,6 @@ class Binarizer(nn.Module):
         return outputs
 
 
-
 class BinarizerFunction(torch.autograd.Function):
     @staticmethod
     def forward(ctx, inputs, threshold):
@@ -44,12 +42,13 @@ class BinarizerFunction(torch.autograd.Function):
         # Straight-through estimator: pass gradients through unchanged
         return grad_output, None  # None for the threshold
 
+
 class Binarizer(nn.Module):
     """Binarizer {0, 1} a real-valued tensor."""
 
     def __init__(self, threshold=5e-3):
         super(Binarizer, self).__init__()
-        self.threshold = threshold       
+        self.threshold = threshold
 
     def forward(self, inputs):
         return BinarizerFunction.apply(inputs, self.threshold)
@@ -69,22 +68,24 @@ class TernarizerFunction(torch.autograd.Function):
         # Straight-through estimator: pass gradients through unchanged
         return grad_output, None  # None for the threshold
 
+
 class Ternarizer(nn.Module):
     """Ternarizes {-1, 0, 1} a real-valued tensor."""
 
     def __init__(self, threshold=5e-3):
         super(Ternarizer, self).__init__()
-        self.threshold = threshold       
+        self.threshold = threshold
 
     def forward(self, inputs):
         return TernarizerFunction.apply(inputs, self.threshold)
 
+
 def linear(input):
     return input
-    
-class Thresholder(nn.Module):
 
-    def __init__(self, function = "sigmoid"):
+
+class Thresholder(nn.Module):
+    def __init__(self, function="sigmoid"):
         super(Thresholder, self).__init__()
         self.threshold = 5e-3
         if function == "linear":
@@ -98,14 +99,15 @@ class Thresholder(nn.Module):
 
     def forward(self, inputs):
         return self.threshold_fn(inputs)
-    
+
+
 def inverseSigmoid(tensor):
     """
     Computes the inverse sigmoid (logit) of all values in a PyTorch tensor.
-    
+
     Args:
         tensor (torch.Tensor): Input tensor with values between 0 and 1 (exclusive).
-    
+
     Returns:
         torch.Tensor: A tensor with the inverse sigmoid applied element-wise.
     """
@@ -114,49 +116,110 @@ def inverseSigmoid(tensor):
     tensor = torch.clamp(tensor, epsilon, 1 - epsilon)
     return torch.log(tensor / (1 - tensor))
 
-def GRUBlockMath(input, hn, weight_thresholded_ih, weight_thresholded_hh, bias_ih_l0,
-              bias_hh_l0, batch_size=None, bias=True, num_layers=1, dropout=0.0, training=False, bidirectional= False, batch_first=False):
 
-  #print(weight_thresholded_ih)
-  tensors = [weight_thresholded_ih,
-             weight_thresholded_hh,
-             bias_ih_l0,
-             bias_hh_l0]
-  #print(tensors)
-  #batch_size = torch.tensor(batch_size)
-  batch_size = None
-  if batch_size==None:
-    output, new_hn = _VF_gru(input, hn, tensors, bias, num_layers, dropout, training, bidirectional, batch_first )
-  else:
-    output, new_hn = _VF_gru(input, batch_size, hn, tensors, bias, num_layers, dropout, training, bidirectional )
-  #print(output)
-  return output, new_hn
+def GRUBlockMath(
+    input,
+    hn,
+    weight_thresholded_ih,
+    weight_thresholded_hh,
+    bias_ih_l0,
+    bias_hh_l0,
+    batch_size=None,
+    bias=True,
+    num_layers=1,
+    dropout=0.0,
+    training=False,
+    bidirectional=False,
+    batch_first=False,
+):
+    # print(weight_thresholded_ih)
+    tensors = [weight_thresholded_ih, weight_thresholded_hh, bias_ih_l0, bias_hh_l0]
+    # print(tensors)
+    # batch_size = torch.tensor(batch_size)
+    batch_size = None
+    if batch_size == None:
+        output, new_hn = _VF_gru(
+            input,
+            hn,
+            tensors,
+            bias,
+            num_layers,
+            dropout,
+            training,
+            bidirectional,
+            batch_first,
+        )
+    else:
+        output, new_hn = _VF_gru(
+            input,
+            batch_size,
+            hn,
+            tensors,
+            bias,
+            num_layers,
+            dropout,
+            training,
+            bidirectional,
+        )
+    # print(output)
+    return output, new_hn
 
-def LSTMBlockMath(input, hn, weight_thresholded_ih, weight_thresholded_hh, bias_ih_l0,
-              bias_hh_l0, batch_size=None, bias=True, num_layers=1, dropout=0.0, training=False, bidirectional= False, batch_first=False):
 
-  #print(weight_thresholded_ih)
-  tensors = [weight_thresholded_ih,
-             weight_thresholded_hh,
-             bias_ih_l0,
-             bias_hh_l0]
-  #batch_size = torch.tensor(batch_size)
-  batch_size= None
-  if batch_size==None:
-    results = _VF_lstm(input, hn, tensors, bias, num_layers, dropout, training, bidirectional, batch_first )
-  else:
-    results = _VF_lstm(input, batch_size, hn, tensors, bias, num_layers, dropout, training, bidirectional )
-  output=results[0]
-  return output
+def LSTMBlockMath(
+    input,
+    hn,
+    weight_thresholded_ih,
+    weight_thresholded_hh,
+    bias_ih_l0,
+    bias_hh_l0,
+    batch_size=None,
+    bias=True,
+    num_layers=1,
+    dropout=0.0,
+    training=False,
+    bidirectional=False,
+    batch_first=False,
+):
+    # print(weight_thresholded_ih)
+    tensors = [weight_thresholded_ih, weight_thresholded_hh, bias_ih_l0, bias_hh_l0]
+    # batch_size = torch.tensor(batch_size)
+    batch_size = None
+    if batch_size == None:
+        results = _VF_lstm(
+            input,
+            hn,
+            tensors,
+            bias,
+            num_layers,
+            dropout,
+            training,
+            bidirectional,
+            batch_first,
+        )
+    else:
+        results = _VF_lstm(
+            input,
+            batch_size,
+            hn,
+            tensors,
+            bias,
+            num_layers,
+            dropout,
+            training,
+            bidirectional,
+        )
+    output = results[0]
+    return output
 
 
 class ElementWiseGRU(nn.Module):
     """Modified GRU layer."""
+
     def __init__(
         self,
         input_size=4,
         device=torch.device("cpu"),
-      	num_layers=1,
+        num_layers=1,
         hidden_size=50,
         output_size=2,
         batch_size=128,
@@ -165,12 +228,12 @@ class ElementWiseGRU(nn.Module):
         training=False,
         bidirectional=False,
         batch_first=True,
-        mask_init='1s',
+        mask_init="1s",
         mask_scale=2e-2,
-        threshold_fn='sigmoid',
-      	threshold=5e-3,
+        threshold_fn="sigmoid",
+        threshold=5e-3,
         seq_len=10,
-        GRU_weights = None
+        GRU_weights=None,
     ):
         super(ElementWiseGRU, self).__init__()
 
@@ -181,26 +244,25 @@ class ElementWiseGRU(nn.Module):
         self.output_size = output_size
         self.batch_size = batch_size
         self.device = torch.device(device)
-        self.bias=bias
-        self.dropout=dropout
-        self.training=training
-        self.bidirectional=bidirectional
-        self.batch_first=batch_first
+        self.bias = bias
+        self.dropout = dropout
+        self.training = training
+        self.bidirectional = bidirectional
+        self.batch_first = batch_first
         self.mask_init = mask_init
         self.mask_scale = mask_scale
         self.threshold_fn = threshold_fn
-        self.threshold=threshold
-        self.seq_len=seq_len,
+        self.threshold = threshold
+        self.seq_len = (seq_len,)
 
         self.h0 = np.zeros((1, self.hidden_size))
 
         if threshold is None:
             threshold = DEFAULT_THRESHOLD
         self.info = {
-            'threshold_fn': threshold_fn,
-            'threshold': threshold,
+            "threshold_fn": threshold_fn,
+            "threshold": threshold,
         }
-
 
         if GRU_weights is not None:
             self.weight_ih = Parameter(GRU_weights.weight_ih_l0)
@@ -208,21 +270,31 @@ class ElementWiseGRU(nn.Module):
             self.bias_ih_l0 = Parameter(GRU_weights.bias_ih_l0)
             self.bias_hh_l0 = Parameter(GRU_weights.bias_hh_l0)
         else:
-            self.weight_ih = Parameter(torch.Tensor(
-                3*hidden_size, input_size).uniform_(-sqrt(1/self.hidden_size),sqrt(1/self.hidden_size)))
-            self.weight_hh = Parameter(torch.Tensor(
-                3*hidden_size, hidden_size).uniform_(-sqrt(1/self.hidden_size),sqrt(1/self.hidden_size)))
+            self.weight_ih = Parameter(
+                torch.Tensor(3 * hidden_size, input_size).uniform_(
+                    -sqrt(1 / self.hidden_size), sqrt(1 / self.hidden_size)
+                )
+            )
+            self.weight_hh = Parameter(
+                torch.Tensor(3 * hidden_size, hidden_size).uniform_(
+                    -sqrt(1 / self.hidden_size), sqrt(1 / self.hidden_size)
+                )
+            )
 
-            self.bias_ih_l0 = Parameter(torch.Tensor(
-                3*hidden_size).uniform_(-sqrt(1/self.hidden_size),sqrt(1/self.hidden_size)))
-            self.bias_hh_l0 = Parameter(torch.Tensor(
-                3*hidden_size).uniform_(-sqrt(1/self.hidden_size),sqrt(1/self.hidden_size)))
+            self.bias_ih_l0 = Parameter(
+                torch.Tensor(3 * hidden_size).uniform_(
+                    -sqrt(1 / self.hidden_size), sqrt(1 / self.hidden_size)
+                )
+            )
+            self.bias_hh_l0 = Parameter(
+                torch.Tensor(3 * hidden_size).uniform_(
+                    -sqrt(1 / self.hidden_size), sqrt(1 / self.hidden_size)
+                )
+            )
 
-        
-
-        if threshold_fn == 'binarizer':
+        if threshold_fn == "binarizer":
             self.threshold_fn = Binarizer()
-        elif threshold_fn == 'ternarizer':
+        elif threshold_fn == "ternarizer":
             self.threshold_fn = Ternarizer()
         else:
             self.threshold_fn = Thresholder(function=threshold_fn)
@@ -230,110 +302,137 @@ class ElementWiseGRU(nn.Module):
 
         # Initialize real-valued mask weights.
 
-        self.initialize_piggymask(mask_init,self.mask_scale)
+        self.initialize_piggymask(mask_init, self.mask_scale)
 
-    def forward(self,input):
-        
-        self.hn=self._build_initial_state(input, self.h0)
-        
+    def forward(self, input):
+        self.hn = self._build_initial_state(input, self.h0)
+
         # Apply threshold function to real valued masks
         mask_thresholded_ih = self.threshold_fn(self.mask_real_weight_ih)
         mask_thresholded_hh = self.threshold_fn(self.mask_real_weight_hh)
         mask_thresholded_bias_ih_l0 = self.threshold_fn(self.mask_real_bias_ih_l0)
         mask_thresholded_bias_hh_l0 = self.threshold_fn(self.mask_real_bias_hh_l0)
-        
+
         # Mask weights with above mask.
         weight_thresholded_ih = mask_thresholded_ih * self.weight_ih
         weight_thresholded_hh = mask_thresholded_hh * self.weight_hh
         weight_thresholded_bias_ih = mask_thresholded_bias_ih_l0 * self.bias_ih_l0
         weight_thresholded_bias_hh = mask_thresholded_bias_hh_l0 * self.bias_hh_l0
 
-        out,_ = GRUBlockMath(input, self.hn, weight_thresholded_ih, weight_thresholded_hh,
-                                weight_thresholded_bias_ih, weight_thresholded_bias_hh, self.batch_size, self.bias, self.num_layers, self.dropout,
-                                self.training, self.bidirectional, self.batch_first)
+        out, _ = GRUBlockMath(
+            input,
+            self.hn,
+            weight_thresholded_ih,
+            weight_thresholded_hh,
+            weight_thresholded_bias_ih,
+            weight_thresholded_bias_hh,
+            self.batch_size,
+            self.bias,
+            self.num_layers,
+            self.dropout,
+            self.training,
+            self.bidirectional,
+            self.batch_first,
+        )
         # Get output using modified weight.
 
         return out
-    
-    def reinit_piggymask(self, mask_init, mask_scale,freeze_masks = None,masks = None):
+
+    def reinit_piggymask(self, mask_init, mask_scale, freeze_masks=None, masks=None):
         if masks is not None:
-            self.mask_real_weight_ih = Parameter(inverseSigmoid(masks["mask_real_weight_ih"]))
-            self.mask_real_weight_hh = Parameter(inverseSigmoid(masks["mask_real_weight_hh"]))
-            self.mask_real_bias_ih_l0 = Parameter(inverseSigmoid(masks["mask_real_bias_ih_l0"]))
-            self.mask_real_bias_hh_l0 = Parameter(inverseSigmoid(masks["mask_real_bias_hh_l0"]))
+            self.mask_real_weight_ih = Parameter(
+                inverseSigmoid(masks["mask_real_weight_ih"])
+            )
+            self.mask_real_weight_hh = Parameter(
+                inverseSigmoid(masks["mask_real_weight_hh"])
+            )
+            self.mask_real_bias_ih_l0 = Parameter(
+                inverseSigmoid(masks["mask_real_bias_ih_l0"])
+            )
+            self.mask_real_bias_hh_l0 = Parameter(
+                inverseSigmoid(masks["mask_real_bias_hh_l0"])
+            )
         else:
-            self.initialize_piggymask(mask_init,mask_scale,freeze_masks = freeze_masks)
-    
+            self.initialize_piggymask(mask_init, mask_scale, freeze_masks=freeze_masks)
+
     def create_freezemask(self):
         """
-            Create initial freeze masks.
+        Create initial freeze masks.
         """
         freeze_masks = {}
-        freeze_masks["weight_ih"]= torch.zeros_like(self.weight_ih)
-        freeze_masks["weight_hh"]= torch.zeros_like(self.weight_hh)
-        freeze_masks["bias_ih_l0"]= torch.zeros_like(self.bias_ih_l0)
-        freeze_masks["bias_hh_l0"]= torch.zeros_like(self.bias_hh_l0)
+        freeze_masks["weight_ih"] = torch.zeros_like(self.weight_ih)
+        freeze_masks["weight_hh"] = torch.zeros_like(self.weight_hh)
+        freeze_masks["bias_ih_l0"] = torch.zeros_like(self.bias_ih_l0)
+        freeze_masks["bias_hh_l0"] = torch.zeros_like(self.bias_hh_l0)
         return freeze_masks
 
-    
     def expand_hidden(self, addendum):
         """
-            Parameters are expanded by a factor of "addendum". New weights are initialized normally while
-            previously learned ones are kept and frozen
+        Parameters are expanded by a factor of "addendum". New weights are initialized normally while
+        previously learned ones are kept and frozen
 
-            Input:
-                addendum: factor by which the hidden size is expanded
+        Input:
+            addendum: factor by which the hidden size is expanded
 
-            Output:
-                freeze_masks: newly created freeze masks based on the new size
+        Output:
+            freeze_masks: newly created freeze masks based on the new size
         """
         self.hidden_size = round(self.hidden_size + addendum)
         freeze_masks = {}
 
-        temp_weight_ih = torch.Tensor(
-            3*self.hidden_size, self.input_size).uniform_(-sqrt(1/self.hidden_size),sqrt(1/self.hidden_size))
-        freeze_masks["weight_ih"]= torch.zeros_like(temp_weight_ih)
+        temp_weight_ih = torch.Tensor(3 * self.hidden_size, self.input_size).uniform_(
+            -sqrt(1 / self.hidden_size), sqrt(1 / self.hidden_size)
+        )
+        freeze_masks["weight_ih"] = torch.zeros_like(temp_weight_ih)
 
-        temp_weight_hh = torch.Tensor(
-            3*self.hidden_size, self.hidden_size).uniform_(-sqrt(1/self.hidden_size),sqrt(1/self.hidden_size))
-        freeze_masks["weight_hh"]= torch.zeros_like(temp_weight_hh)
+        temp_weight_hh = torch.Tensor(3 * self.hidden_size, self.hidden_size).uniform_(
+            -sqrt(1 / self.hidden_size), sqrt(1 / self.hidden_size)
+        )
+        freeze_masks["weight_hh"] = torch.zeros_like(temp_weight_hh)
 
+        temp_bias_ih_l0 = torch.Tensor(3 * self.hidden_size).uniform_(
+            -sqrt(1 / self.hidden_size), sqrt(1 / self.hidden_size)
+        )
+        freeze_masks["bias_ih_l0"] = torch.zeros_like(temp_bias_ih_l0)
 
-        temp_bias_ih_l0 = torch.Tensor(
-            3*self.hidden_size).uniform_(-sqrt(1/self.hidden_size),sqrt(1/self.hidden_size))
-        freeze_masks["bias_ih_l0"]= torch.zeros_like(temp_bias_ih_l0)
+        temp_bias_hh_l0 = torch.Tensor(3 * self.hidden_size).uniform_(
+            -sqrt(1 / self.hidden_size), sqrt(1 / self.hidden_size)
+        )
+        freeze_masks["bias_hh_l0"] = torch.zeros_like(temp_bias_hh_l0)
 
-        temp_bias_hh_l0 = torch.Tensor(
-            3*self.hidden_size).uniform_(-sqrt(1/self.hidden_size),sqrt(1/self.hidden_size))
-        freeze_masks["bias_hh_l0"]= torch.zeros_like(temp_bias_hh_l0)
+        temp_weight_ih[: self.weight_ih.size(0), : self.weight_ih.size(1)].copy_(
+            self.weight_ih
+        )
+        freeze_masks["weight_ih"][
+            : self.weight_ih.size(0), : self.weight_ih.size(1)
+        ].fill_(1)
+        self.weight_ih = Parameter(temp_weight_ih)
 
-        
-        temp_weight_ih[:self.weight_ih.size(0),:self.weight_ih.size(1)].copy_(self.weight_ih)
-        freeze_masks["weight_ih"][:self.weight_ih.size(0),:self.weight_ih.size(1)].fill_(1)
-        self.weight_ih= Parameter(temp_weight_ih)
+        temp_weight_hh[: self.weight_hh.size(0), : self.weight_hh.size(1)].copy_(
+            self.weight_hh
+        )
+        freeze_masks["weight_hh"][
+            : self.weight_hh.size(0), : self.weight_hh.size(1)
+        ].fill_(1)
+        self.weight_hh = Parameter(temp_weight_hh)
 
-        temp_weight_hh[:self.weight_hh.size(0),:self.weight_hh.size(1)].copy_(self.weight_hh)
-        freeze_masks["weight_hh"][:self.weight_hh.size(0),:self.weight_hh.size(1)].fill_(1)
-        self.weight_hh= Parameter(temp_weight_hh)
-        
-        
-        temp_bias_ih_l0[:self.bias_ih_l0.size(0)].copy_(self.bias_ih_l0)
-        freeze_masks["bias_ih_l0"][:self.bias_ih_l0.size(0)].fill_(1)
-        self.bias_ih_l0= Parameter(temp_bias_ih_l0)
+        temp_bias_ih_l0[: self.bias_ih_l0.size(0)].copy_(self.bias_ih_l0)
+        freeze_masks["bias_ih_l0"][: self.bias_ih_l0.size(0)].fill_(1)
+        self.bias_ih_l0 = Parameter(temp_bias_ih_l0)
 
-        temp_bias_hh_l0[:self.bias_hh_l0.size(0)].copy_(self.bias_hh_l0)
-        freeze_masks["bias_hh_l0"][:self.bias_hh_l0.size(0)].fill_(1)
-        self.bias_hh_l0= Parameter(temp_bias_hh_l0)
+        temp_bias_hh_l0[: self.bias_hh_l0.size(0)].copy_(self.bias_hh_l0)
+        freeze_masks["bias_hh_l0"][: self.bias_hh_l0.size(0)].fill_(1)
+        self.bias_hh_l0 = Parameter(temp_bias_hh_l0)
 
         # Initialize real-valued mask weights.
         self.h0 = np.zeros((1, self.hidden_size))
 
         # Adjust piggymasks based on the new size
-        self.adjust_piggymask(mask_scale=self.mask_scale,freeze_masks=freeze_masks)
+        self.adjust_piggymask(mask_scale=self.mask_scale, freeze_masks=freeze_masks)
 
         return freeze_masks
-    
-    def adjust_piggymask(self,mask_scale,freeze_masks):
+
+    def adjust_piggymask(self, mask_scale, freeze_masks):
         temp_mask_real_weight_ih = self.weight_ih.data.new(self.weight_ih.size())
         temp_mask_real_weight_hh = self.weight_hh.data.new(self.weight_hh.size())
         temp_mask_real_bias_ih_l0 = self.weight_ih.data.new(self.bias_ih_l0.size())
@@ -344,40 +443,63 @@ class ElementWiseGRU(nn.Module):
         temp_mask_real_bias_ih_l0.fill_(mask_scale)
         temp_mask_real_bias_hh_l0.fill_(mask_scale)
 
-        temp_mask_real_weight_ih[:self.mask_real_weight_ih.size(0),:self.mask_real_weight_ih.size(1)].copy_(self.mask_real_weight_ih)
-        temp_mask_real_weight_hh[:self.mask_real_weight_hh.size(0),:self.mask_real_weight_hh.size(1)].copy_(self.mask_real_weight_hh)
-        temp_mask_real_bias_ih_l0[:self.mask_real_bias_ih_l0.size(0)].copy_(self.mask_real_bias_ih_l0)
-        temp_mask_real_bias_hh_l0[:self.mask_real_bias_hh_l0.size(0)].copy_(self.mask_real_bias_hh_l0)
-        
+        temp_mask_real_weight_ih[
+            : self.mask_real_weight_ih.size(0), : self.mask_real_weight_ih.size(1)
+        ].copy_(self.mask_real_weight_ih)
+        temp_mask_real_weight_hh[
+            : self.mask_real_weight_hh.size(0), : self.mask_real_weight_hh.size(1)
+        ].copy_(self.mask_real_weight_hh)
+        temp_mask_real_bias_ih_l0[: self.mask_real_bias_ih_l0.size(0)].copy_(
+            self.mask_real_bias_ih_l0
+        )
+        temp_mask_real_bias_hh_l0[: self.mask_real_bias_hh_l0.size(0)].copy_(
+            self.mask_real_bias_hh_l0
+        )
+
         self.mask_real_weight_ih = Parameter(temp_mask_real_weight_ih)
         self.mask_real_weight_hh = Parameter(temp_mask_real_weight_hh)
         self.mask_real_bias_ih_l0 = Parameter(temp_mask_real_bias_ih_l0)
         self.mask_real_bias_hh_l0 = Parameter(temp_mask_real_bias_hh_l0)
 
-    def initialize_piggymask(self,mask_init,mask_scale, freeze_masks = None):
+    def initialize_piggymask(self, mask_init, mask_scale, freeze_masks=None):
         temp_mask_real_weight_ih = self.weight_ih.data.new(self.weight_ih.size())
         temp_mask_real_weight_hh = self.weight_hh.data.new(self.weight_hh.size())
         temp_mask_real_bias_ih_l0 = self.weight_ih.data.new(self.bias_ih_l0.size())
         temp_mask_real_bias_hh_l0 = self.weight_hh.data.new(self.bias_hh_l0.size())
 
-        if mask_init == '1s':
+        if mask_init == "1s":
             temp_mask_real_weight_ih.fill_(mask_scale)
             temp_mask_real_weight_hh.fill_(mask_scale)
             temp_mask_real_bias_ih_l0.fill_(mask_scale)
             temp_mask_real_bias_hh_l0.fill_(mask_scale)
-        elif mask_init == 'uniform':
+        elif mask_init == "uniform":
             temp_mask_real_weight_ih.uniform_(-1 * mask_scale, mask_scale)
             temp_mask_real_weight_hh.uniform_(-1 * mask_scale, mask_scale)
             temp_mask_real_bias_ih_l0.uniform_(-1 * mask_scale, mask_scale)
             temp_mask_real_bias_hh_l0.uniform_(-1 * mask_scale, mask_scale)
 
         if freeze_masks is not None:
-            temp_mask_real_weight_ih[freeze_masks["weight_ih"].eq(1)] = temp_mask_real_weight_ih[freeze_masks["weight_ih"].eq(1)].uniform_(-1 * mask_scale, mask_scale)
-            temp_mask_real_weight_hh[freeze_masks["weight_hh"].eq(1)] = temp_mask_real_weight_hh[freeze_masks["weight_hh"].eq(1)].uniform_(-1 * mask_scale, mask_scale)
-            temp_mask_real_bias_ih_l0[freeze_masks["bias_ih_l0"].eq(1)] = temp_mask_real_bias_ih_l0[freeze_masks["bias_ih_l0"].eq(1)].uniform_(-1 * mask_scale, mask_scale)
-            temp_mask_real_bias_hh_l0[freeze_masks["bias_hh_l0"].eq(1)] = temp_mask_real_bias_hh_l0[freeze_masks["bias_hh_l0"].eq(1)].uniform_(-1 * mask_scale, mask_scale)
-            
-        
+            temp_mask_real_weight_ih[
+                freeze_masks["weight_ih"].eq(1)
+            ] = temp_mask_real_weight_ih[freeze_masks["weight_ih"].eq(1)].uniform_(
+                -1 * mask_scale, mask_scale
+            )
+            temp_mask_real_weight_hh[
+                freeze_masks["weight_hh"].eq(1)
+            ] = temp_mask_real_weight_hh[freeze_masks["weight_hh"].eq(1)].uniform_(
+                -1 * mask_scale, mask_scale
+            )
+            temp_mask_real_bias_ih_l0[
+                freeze_masks["bias_ih_l0"].eq(1)
+            ] = temp_mask_real_bias_ih_l0[freeze_masks["bias_ih_l0"].eq(1)].uniform_(
+                -1 * mask_scale, mask_scale
+            )
+            temp_mask_real_bias_hh_l0[
+                freeze_masks["bias_hh_l0"].eq(1)
+            ] = temp_mask_real_bias_hh_l0[freeze_masks["bias_hh_l0"].eq(1)].uniform_(
+                -1 * mask_scale, mask_scale
+            )
+
         self.mask_real_weight_ih = Parameter(temp_mask_real_weight_ih)
         self.mask_real_weight_hh = Parameter(temp_mask_real_weight_hh)
         self.mask_real_bias_ih_l0 = Parameter(temp_mask_real_bias_ih_l0)
@@ -389,7 +511,6 @@ class ElementWiseGRU(nn.Module):
         return s.to(self.device)
 
 
-
 class ElementWiseLinear(nn.Module):
     """Modified linear layer."""
 
@@ -398,12 +519,12 @@ class ElementWiseLinear(nn.Module):
         in_features,
         out_features,
         bias=True,
-        mask_init='1s',
+        mask_init="1s",
         mask_scale=2e-2,
-        threshold_fn='sigmoid',
+        threshold_fn="sigmoid",
         threshold=5e-3,
-        linear_weights = None
-        ):
+        linear_weights=None,
+    ):
         super(ElementWiseLinear, self).__init__()
 
         self.in_features = in_features
@@ -411,100 +532,114 @@ class ElementWiseLinear(nn.Module):
         self.threshold_fn = threshold_fn
         self.mask_scale = mask_scale
         self.mask_init = mask_init
-        
+
         if threshold is None:
             threshold = DEFAULT_THRESHOLD
         self.info = {
-            'threshold_fn': threshold_fn,
-            'threshold': threshold,
+            "threshold_fn": threshold_fn,
+            "threshold": threshold,
         }
 
         if linear_weights is not None:
             self.weight = Parameter(linear_weights.weight)
             self.bias = Parameter(linear_weights.bias)
         else:
-            self.weight = Parameter(torch.Tensor(
-                out_features, in_features).uniform_(-sqrt(1/self.in_features),sqrt(1/self.in_features)))
+            self.weight = Parameter(
+                torch.Tensor(out_features, in_features).uniform_(
+                    -sqrt(1 / self.in_features), sqrt(1 / self.in_features)
+                )
+            )
             if bias:
-                self.bias = Parameter(torch.Tensor(
-                    out_features).uniform_(-sqrt(1/self.in_features),sqrt(1/self.in_features)))
+                self.bias = Parameter(
+                    torch.Tensor(out_features).uniform_(
+                        -sqrt(1 / self.in_features), sqrt(1 / self.in_features)
+                    )
+                )
             else:
-                self.register_parameter('bias', None)
+                self.register_parameter("bias", None)
 
-        
-        
         # Initialize the thresholder.
-        if threshold_fn == 'binarizer':
+        if threshold_fn == "binarizer":
             self.threshold_fn = Binarizer()
-        elif threshold_fn == 'ternarizer':
+        elif threshold_fn == "ternarizer":
             self.threshold_fn = Ternarizer()
         else:
             self.threshold_fn = Thresholder(function=threshold_fn)
             self.mask_scale = 1
 
         # Initialize real-valued mask weights.
-        self.initialize_piggymask(mask_init,self.mask_scale)
+        self.initialize_piggymask(mask_init, self.mask_scale)
 
-
-    def reinit_piggymask(self, mask_init, mask_scale,freeze_masks = None, masks = None):
+    def reinit_piggymask(self, mask_init, mask_scale, freeze_masks=None, masks=None):
         if masks is not None:
             self.mask_real_weight = Parameter(inverseSigmoid(masks["mask_real_weight"]))
         else:
-            self.initialize_piggymask(mask_init,mask_scale,freeze_mask = freeze_masks)
-    
+            self.initialize_piggymask(mask_init, mask_scale, freeze_mask=freeze_masks)
+
     def reinit_linear_bias(self):
         if self.bias != None:
-            self.bias = Parameter(torch.Tensor(
-                self.out_features).uniform_(-sqrt(1/self.in_features),sqrt(1/self.in_features)))
+            self.bias = Parameter(
+                torch.Tensor(self.out_features).uniform_(
+                    -sqrt(1 / self.in_features), sqrt(1 / self.in_features)
+                )
+            )
         else:
-            self.register_parameter('bias', None)
+            self.register_parameter("bias", None)
 
     def create_freezemask(self):
         freeze_masks = {}
-        freeze_masks["weight"]= torch.zeros_like(self.weight)
+        freeze_masks["weight"] = torch.zeros_like(self.weight)
         return freeze_masks
 
-    def initialize_piggymask(self, mask_init, mask_scale, Linear_mask_weights=[],freeze_mask = None):
+    def initialize_piggymask(
+        self, mask_init, mask_scale, Linear_mask_weights=[], freeze_mask=None
+    ):
         temp_mask_real_weight = self.weight.data.new(self.weight.size())
-        if mask_init == '1s':
+        if mask_init == "1s":
             temp_mask_real_weight.fill_(mask_scale)
-        elif mask_init == 'uniform':
+        elif mask_init == "uniform":
             temp_mask_real_weight.uniform_(-1 * mask_scale, mask_scale)
-        
-        if freeze_mask is not None:
-            temp_mask_real_weight[freeze_mask["weight"].eq(1)] = temp_mask_real_weight[freeze_mask["weight"].eq(1)].uniform_(-1 * mask_scale, mask_scale)
 
-        if Linear_mask_weights!=[]:
+        if freeze_mask is not None:
+            temp_mask_real_weight[freeze_mask["weight"].eq(1)] = temp_mask_real_weight[
+                freeze_mask["weight"].eq(1)
+            ].uniform_(-1 * mask_scale, mask_scale)
+
+        if Linear_mask_weights != []:
             self.mask_real_weight = Parameter(Linear_mask_weights)
         else:
             self.mask_real_weight = Parameter(temp_mask_real_weight)
 
-        
-
-    def expand_hidden(self,multiplier):
+    def expand_hidden(self, multiplier):
         freeze_mask = {}
         self.in_features = round(self.in_features + multiplier)
-        temp_weight = torch.Tensor(
-            self.out_features, self.in_features).uniform_(-sqrt(1/self.in_features),sqrt(1/self.in_features))
+        temp_weight = torch.Tensor(self.out_features, self.in_features).uniform_(
+            -sqrt(1 / self.in_features), sqrt(1 / self.in_features)
+        )
         freeze_mask["weight"] = torch.zeros_like(temp_weight)
-        temp_weight[:self.weight.size(0),:self.weight.size(1)].copy_(self.weight)
-        freeze_mask["weight"][:self.weight.size(0),:self.weight.size(1)].fill_(1)
-        self.weight= Parameter(temp_weight)
+        temp_weight[: self.weight.size(0), : self.weight.size(1)].copy_(self.weight)
+        freeze_mask["weight"][: self.weight.size(0), : self.weight.size(1)].fill_(1)
+        self.weight = Parameter(temp_weight)
         if self.bias != None:
-            self.bias = Parameter(torch.Tensor(
-                self.out_features).uniform_(-sqrt(1/self.in_features),sqrt(1/self.in_features)))
+            self.bias = Parameter(
+                torch.Tensor(self.out_features).uniform_(
+                    -sqrt(1 / self.in_features), sqrt(1 / self.in_features)
+                )
+            )
         else:
-            self.register_parameter('bias', None)
-        self.adjust_piggymask(self.mask_scale,freeze_masks=freeze_mask)
+            self.register_parameter("bias", None)
+        self.adjust_piggymask(self.mask_scale, freeze_masks=freeze_mask)
         return freeze_mask
-        
-    def adjust_piggymask(self,mask_scale,freeze_masks):
+
+    def adjust_piggymask(self, mask_scale, freeze_masks):
         temp_mask_real_weight = self.weight.data.new(self.weight.size())
 
         temp_mask_real_weight.fill_(mask_scale)
 
-        temp_mask_real_weight[:self.mask_real_weight.size(0),:self.mask_real_weight.size(1)].copy_(self.mask_real_weight)
-               
+        temp_mask_real_weight[
+            : self.mask_real_weight.size(0), : self.mask_real_weight.size(1)
+        ].copy_(self.mask_real_weight)
+
         self.mask_real_weight = Parameter(temp_mask_real_weight)
 
     def forward(self, input):
@@ -512,6 +647,6 @@ class ElementWiseLinear(nn.Module):
         mask_thresholded = self.threshold_fn(self.mask_real_weight)
         # Mask weights with above mask.
         weight_thresholded = mask_thresholded * self.weight
-        a = F.linear(input[:,-1,:], weight_thresholded, self.bias)
+        a = F.linear(input[:, -1, :], weight_thresholded, self.bias)
         # Get output using modified weight.
         return a

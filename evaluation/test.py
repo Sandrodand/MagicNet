@@ -12,11 +12,7 @@ from evaluation.default_parameters import *
 # PARAMETERS
 # __________________
 PATHS = [
-    (
-        f"/datasets/"
-        f"weather_{c}conf"
-    )
-    for c in range(1,51)
+    (f"/datasets/" f"weather_{c}conf") for c in range(1, 51)
 ]  # a list containing the paths of the data streams (without the extension)
 PATH_PERFORMANCE = "gin"
 # the path in which to save the results. In the case of a relative path, the performance folder is automatically
@@ -74,7 +70,11 @@ WRITE_CHECKPOINTS = True
 
 
 PREC_REC_SFX = ""
-if USE_DETECTOR and DETECTOR_SIMULATOR_PRECISION is not None and DETECTOR_SIMULATOR_RECALL is not None:
+if (
+    USE_DETECTOR
+    and DETECTOR_SIMULATOR_PRECISION is not None
+    and DETECTOR_SIMULATOR_RECALL is not None
+):
     PREC_REC_SFX = (
         f"_{int(DETECTOR_SIMULATOR_PRECISION * 100)}prec_"
         f"{int(DETECTOR_SIMULATOR_RECALL * 100)}rec"
@@ -125,7 +125,7 @@ learners = [
         batch_learner=False,
         drift=True,
         cpnn=False,
-        gin=True
+        gin=True,
     ),
 ]
 
@@ -137,8 +137,8 @@ METRICS = ["accuracy", "kappa"]
 if OUTPUT_FILE is None:
     OUTPUT_FILE = PATHS[0].split("/")[-1]
     if (
-        USE_DETECTOR and
-        DETECTOR_SIMULATOR_PRECISION is not None
+        USE_DETECTOR
+        and DETECTOR_SIMULATOR_PRECISION is not None
         and DETECTOR_SIMULATOR_RECALL is not None
     ):
         OUTPUT_FILE = (
@@ -166,8 +166,8 @@ try:
     for path in PATHS:
         current_path_performance = os.path.join(PATH_PERFORMANCE, path.split("/")[-1])
         if (
-            USE_DETECTOR and
-            DETECTOR_SIMULATOR_PRECISION is not None
+            USE_DETECTOR
+            and DETECTOR_SIMULATOR_PRECISION is not None
             and DETECTOR_SIMULATOR_RECALL is not None
         ):
             current_path_performance = (
@@ -233,7 +233,7 @@ try:
             mask_init=MASK_INIT,
             hidden_mult=HIDDEN_MULT,
             ensemble_batches=ENSEMBLE_BATCHES,
-            ensemble_th=ENSEMBLE_TH
+            ensemble_th=ENSEMBLE_TH,
         )
         CFG.base_learner.reset_base_learner()
         data_stream = CFG.create_iter_csv
@@ -246,19 +246,27 @@ try:
         print("SUFFIX:", suffix)
         print("DETECTOR:", USE_DETECTOR)
         print("DELAY:", delay)
-        if USE_DETECTOR and DETECTOR_SIMULATOR_PRECISION is not None and DETECTOR_SIMULATOR_RECALL is not None:
+        if (
+            USE_DETECTOR
+            and DETECTOR_SIMULATOR_PRECISION is not None
+            and DETECTOR_SIMULATOR_RECALL is not None
+        ):
             print("DETECTOR PRECISION:", DETECTOR_SIMULATOR_PRECISION)
             print("DETECTOR RECALL:", DETECTOR_SIMULATOR_RECALL)
         print()
 
-        if USE_DETECTOR and DETECTOR_SIMULATOR_PRECISION is not None and DETECTOR_SIMULATOR_RECALL is not None:
-                drift_detector = DetectorSimulator(
-                    recall=DETECTOR_SIMULATOR_RECALL,
-                    precision=DETECTOR_SIMULATOR_PRECISION,
-                    dataset=path,
-                    min_delay=DETECTOR_SIMULATOR_MIN_DELAY,
-                    max_delay=DETECTOR_SIMULATOR_MAX_DELAY,
-                )
+        if (
+            USE_DETECTOR
+            and DETECTOR_SIMULATOR_PRECISION is not None
+            and DETECTOR_SIMULATOR_RECALL is not None
+        ):
+            drift_detector = DetectorSimulator(
+                recall=DETECTOR_SIMULATOR_RECALL,
+                precision=DETECTOR_SIMULATOR_PRECISION,
+                dataset=path,
+                min_delay=DETECTOR_SIMULATOR_MIN_DELAY,
+                max_delay=DETECTOR_SIMULATOR_MAX_DELAY,
+            )
         else:
             drift_detector = None
 

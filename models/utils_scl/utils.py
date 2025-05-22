@@ -150,11 +150,13 @@ def kappa_temporal(outputs, targets, first_label=None):
 
 
 """@torch.enable_grad()"""
-def customized_loss(predictions, y, criterion,device):
-    #print(predictions.type(), y.type())
+
+
+def customized_loss(predictions, y, criterion, device):
+    # print(predictions.type(), y.type())
 
     if y.type() != torch.LongTensor:
-        y=y.type(torch.LongTensor)
+        y = y.type(torch.LongTensor)
 
     y = y.to(device)
 

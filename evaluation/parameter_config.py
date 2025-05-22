@@ -11,7 +11,7 @@ from models.sml.temporally_augmented_classifier import TemporallyAugmentedClassi
 
 
 class Config:
-    def __init__(self, base_learner = "clstm"):
+    def __init__(self, base_learner="clstm"):
         self.ta_order = 9
         self.seq_len = 10
         self.num_features = 2
@@ -39,7 +39,7 @@ class Config:
     def set_params(
         self,
         ta_order=None,
-        device = None,
+        device=None,
         seq_len=None,
         num_features=None,
         batch_size=None,
@@ -50,11 +50,11 @@ class Config:
         delta=None,
         output_size=2,
         hidden_size=None,
-        threshold_fn = None,
+        threshold_fn=None,
         mask_init=None,
-        hidden_mult = None,
-        ensemble_batches = None,
-        ensemble_th = None
+        hidden_mult=None,
+        ensemble_batches=None,
+        ensemble_th=None,
     ):
         if ta_order is not None:
             self.ta_order = ta_order
@@ -90,8 +90,6 @@ class Config:
             self.ensemble_batches = ensemble_batches
         if ensemble_th is not None:
             self.ensemble_th = ensemble_th
-
-
 
     def initialize_callback(self, eval_cl_, eval_preq_):
         self.eval_cl = eval_cl_
@@ -159,7 +157,6 @@ class Config:
             hidden_size=self.hidden_size,
         )
 
-
     def create_acpnn_clstm(self):
         return cPNN(
             column_class=cLSTMLinear,
@@ -205,25 +202,24 @@ class Config:
             hidden_size=self.hidden_size,
         )
 
-
     def create_GIN_cGRU_last(self):
         return GIN(
             device="cpu",
             seq_len=self.seq_len,
             train_verbose=False,
             acpnn=True,
-            mask_init = self.mask_init,
-            ensemble_batches = self.ensemble_batches,
+            mask_init=self.mask_init,
+            ensemble_batches=self.ensemble_batches,
             batch_size=self.batch_size,
-            threshold_fn = self.threshold_fn,
+            threshold_fn=self.threshold_fn,
             save_column_freq=None,
             input_size=self.num_features,
             output_size=self.output_size,
             hidden_size=self.hidden_size,
-            hidden_mult = self.hidden_mult,
-            ensemble_th = self.ensemble_th,
-            ensemble_mode = "last",
-            cGRU_weights = self.base_learner.get_base_learner()
+            hidden_mult=self.hidden_mult,
+            ensemble_th=self.ensemble_th,
+            ensemble_mode="last",
+            cGRU_weights=self.base_learner.get_base_learner(),
         )
 
     def callback_func_cl(self, **kwargs):

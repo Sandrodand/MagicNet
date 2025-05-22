@@ -483,8 +483,16 @@ class EvaluatePrequential:
                             break
             for i, m in enumerate(self.anytime_learners):
                 if m.gin:
-                    with open(os.path.join(self.path_write, f"choices_gin{self.suffix}.pkl"), "wb") as f:
-                        pickle.dump(self._eval[self.anytime_learners[i].name + '_anytime']['alg'][iteration].manager.ensemble_choices, f)
+                    with open(
+                        os.path.join(self.path_write, f"choices_gin{self.suffix}.pkl"),
+                        "wb",
+                    ) as f:
+                        pickle.dump(
+                            self._eval[self.anytime_learners[i].name + "_anytime"][
+                                "alg"
+                            ][iteration].manager.ensemble_choices,
+                            f,
+                        )
         with open(
             os.path.join(
                 self.path_write,
@@ -749,7 +757,9 @@ class EvaluatePrequential:
             if self.anytime_scenario:
                 for m in self.anytime_learners:
                     if m.gin:
-                        self._eval[m.name + "_anytime"]["alg"][iteration].manager.store_masks_biases()
+                        self._eval[m.name + "_anytime"]["alg"][
+                            iteration
+                        ].manager.store_masks_biases()
                     self.checkpoint[m.name + "_anytime"][iteration].append(
                         pickle.loads(
                             pickle.dumps(
@@ -761,7 +771,9 @@ class EvaluatePrequential:
             if self.periodic_scenario:
                 for m in self.anytime_learners + self.batch_learners:
                     if m.gin and not self.anytime_scenario:
-                        self._eval[m.name + "_batch"]["alg"][iteration].manager.store_masks_biases()
+                        self._eval[m.name + "_batch"]["alg"][
+                            iteration
+                        ].manager.store_masks_biases()
                     self.checkpoint[m.name + "_batch"][iteration].append(
                         pickle.loads(
                             pickle.dumps(

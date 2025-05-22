@@ -17,7 +17,7 @@ class LearnerConfig:
         smart: bool = False,
         dyn_cpnn: bool = False,
         temp_dep: bool = True,
-        gin: bool = False
+        gin: bool = False,
     ):
         """
 
