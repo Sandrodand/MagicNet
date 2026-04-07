@@ -27,22 +27,26 @@ PATH_BASE_LEARNER = ""
 # created
 PATH_DETECTIONS = ""
 # the path in which to load the detections if LOAD_DETECTIONS is set to True.
-USE_DETECTOR = True
-# True if you want to use a detector, False if you want to use the supervised drift information.
-DETECTOR_SIMULATOR_PRECISION = 0.7
-DETECTOR_SIMULATOR_RECALL = 1
+USE_DETECTOR = False
+# True if you want to use a detector, False if you want to use the supervised drift information (the "task" column in
+# csv file)
+DETECTOR_SIMULATOR_PRECISION = None
+DETECTOR_SIMULATOR_RECALL = None
 # Set both to None if you want to use the automatic drift detector with ADWIN
 # Set both to a specific value if you want to simulate a drift detector with a specific recall and precision
+# This configuration works only when setting USE_DETECTOR = True
 DETECTOR_SIMULATOR_MIN_DELAY = 0
 DETECTOR_SIMULATOR_MAX_DELAY = 1000
 # In the case of detector's simulation they represent the minimum and maximum number of data points following
 # a real drift after which to generate true positives.
 LOAD_DETECTIONS = False
 # Set to true if you want to load the detections of a previously run detector.
-SAVE_BASE_LEARNER = True
+SAVE_BASE_LEARNER = False
 # If True it saves in the base_learner folder the initialized base learner
-UPLOAD_BASE_LEARNER = True
+UPLOAD_BASE_LEARNER = False
 # If True it uploads the base learner from the base_learner folder instead of initializing it random
+# This configuration can be used when you want to use an already initialized base learner. For instance, when you want
+# to compare performance with different detector's configurations and use the same base learner initialization.
 WRITE_CHECKPOINTS = False
 # True if you want to write the pickle files of the models after each supervised concept's end.
 BASE_RNN = "gru"
