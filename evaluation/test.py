@@ -7,6 +7,7 @@ import sys
 import traceback
 from evaluation.parameter_config import *
 from evaluation.default_parameters import *
+from models.cpnn.dynamic_cpnn import DynamicCPNN
 
 # __________________
 # PARAMETERS
@@ -17,9 +18,9 @@ PATHS = [
     (
         f"datasets/weather_{c}conf"
     )
-    for c in range(1,51)
+    for c in range(1,11)
 ]  # a list containing the paths of the data streams (without the extension)
-PATH_PERFORMANCE = ""
+PATH_PERFORMANCE = "dynamic_sentinel"
 # the path in which to save the results. In the case of a relative path, the performance folder is automatically
 # created
 PATH_BASE_LEARNER = ""
@@ -27,7 +28,7 @@ PATH_BASE_LEARNER = ""
 # created
 PATH_DETECTIONS = ""
 # the path in which to load the detections if LOAD_DETECTIONS is set to True.
-USE_DETECTOR = False
+USE_DETECTOR = True
 # True if you want to use a detector, False if you want to use the supervised drift information (the "task" column in
 # csv file)
 DETECTOR_SIMULATOR_PRECISION = None
@@ -47,7 +48,8 @@ UPLOAD_BASE_LEARNER = False
 # If True it uploads the base learner from the base_learner folder instead of initializing it random
 # This configuration can be used when you want to use an already initialized base learner. For instance, when you want
 # to compare performance with different detector's configurations and use the same base learner initialization.
-WRITE_CHECKPOINTS = False
+#TODO
+WRITE_CHECKPOINTS = True
 # True if you want to write the pickle files of the models after each supervised concept's end.
 BASE_RNN = "gru"
 # the base learner. it can be gru or lstm
@@ -89,24 +91,24 @@ suffix = f"_{HIDDEN_SIZE_PARAM}hs" if HIDDEN_SIZE_PARAM is not None else ""
 # LEARNERS
 CFG = Config(base_learner=BASE_RNN)
 learners = [
-    LearnerConfig(
-        name="ARF",
-        model=CFG.create_arf,
-        numeric=False,
-        batch_learner=False,
-        drift=False,
-        cpnn=False,
-        temp_dep=False,
-    ),
-    LearnerConfig(
-        name="ARF_TA",
-        model=CFG.create_arf_ta,
-        numeric=False,
-        batch_learner=False,
-        drift=False,
-        cpnn=False,
-        temp_dep=True,
-    ),
+    # LearnerConfig(
+    #     name="ARF",
+    #     model=CFG.create_arf,
+    #     numeric=False,
+    #     batch_learner=False,
+    #     drift=False,
+    #     cpnn=False,
+    #     temp_dep=False,
+    # ),
+    # LearnerConfig(
+    #     name="ARF_TA",
+    #     model=CFG.create_arf_ta,
+    #     numeric=False,
+    #     batch_learner=False,
+    #     drift=False,
+    #     cpnn=False,
+    #     temp_dep=True,
+    # ),
     LearnerConfig(
         name="cGRU",
         model=CFG.base_learner.get_cpnn,
@@ -115,14 +117,14 @@ learners = [
         drift=False,
         cpnn=True,
     ),
-    LearnerConfig(
-        name="cPNN",
-        model=CFG.base_learner.get_cpnn,
-        numeric=True,
-        batch_learner=False,
-        drift=True,
-        cpnn=True,
-    ),
+    # LearnerConfig(
+    #     name="cPNN",
+    #     model=CFG.base_learner.get_cpnn,
+    #     numeric=True,
+    #     batch_learner=False,
+    #     drift=True,
+    #     cpnn=True,
+    # ),
     LearnerConfig(
         name="MAGIC_Net",
         model=CFG.create_magic_net,
@@ -131,6 +133,26 @@ learners = [
         drift=True,
         cpnn=False,
         magic=True,
+    ),
+    LearnerConfig(
+        name="MAGIC_Net_no_rollback",
+        model=CFG.create_magic_net,
+        numeric=True,
+        batch_learner=False,
+        drift=True,
+        cpnn=False,
+        magic=True,
+    ),
+    LearnerConfig(
+        name="DyncPNN",
+        model=lambda: DynamicCPNN(
+            [CFG.base_learner.get_base_learner()],
+        ),
+        numeric=True,
+        batch_learner=False,
+        drift=True,
+        cpnn=True,
+        dyn_cpnn=True,
     ),
 ]
 

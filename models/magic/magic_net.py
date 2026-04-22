@@ -28,10 +28,13 @@ class MagicNet:
         hidden_mult=50,
         ensemble_batches=50,
         ensemble_th=1.1,
-        ensemble_mode="last",
-        cGRU_weights=None,
+        cgru_weights=None,
         cap_sigmoid=True,
-        expand_last=False,
+        multi_head=True,
+        ignore_option=True,
+        checkpoint_freq=1500,
+        drift_delay=3000,
+        grace_period=5000,
         **kwargs,
     ):
         """
@@ -82,7 +85,7 @@ class MagicNet:
             This parameter defines how transfer learning is injected in the ensemble. "classic": no transfer learning;
             "last": the ensemble contains two extra options that use the previous piggymasks instead of randomly
             initialized ones.
-        cGRU_weights: dict of tensors, default: None.
+        cgru_weights: dict of tensors, default: None.
             Used to pass pre-initialized weights to the cRNN. If None they are initialized as usual
         cap_sigmoid: bool, default: True.
             True if you want to return 1 as sigmoid value for input exceeding the cap_value.
@@ -94,6 +97,7 @@ class MagicNet:
             Parameters of column_class.
         """
         self.cap_sigmoid = True
+        self.multihead = multi_head
 
         self.columns_args = kwargs
         if device is None:
@@ -111,7 +115,6 @@ class MagicNet:
         self.mask_init = mask_init
         self.ensemble_batches = ensemble_batches
         self.ensemble_th = ensemble_th
-        self.ensemble_mode = ensemble_mode
 
         self.seq_len = seq_len
         self.stride = stride
@@ -125,13 +128,18 @@ class MagicNet:
         self.y_batch = []
         self.batch_size = batch_size
         self.saved_columns = []
-        self.cont = 1
+        self.data_point_counter = 1
         self.reset_data_points = reset_data_points
+        self.grace_period = grace_period
+
+        self.checkpoint_freq = checkpoint_freq
 
         self.manager = MagicManager(ensemble_batches=ensemble_batches, input_size=input_size, threshold_fn=threshold_fn,
                                     mask_init=mask_init, hidden_size=hidden_size, hidden_mult=hidden_mult,
-                                    ensemble_th=ensemble_th, cGRU_weights=cGRU_weights, ensemble_mode=ensemble_mode,
-                                    cap_sigmoid=cap_sigmoid, expand_last=expand_last, **self.columns_args)
+                                    ensemble_th=ensemble_th, cgru_weights=cgru_weights, cap_sigmoid=cap_sigmoid,
+                                    multi_head=self.multihead,
+                                    ignore_option=ignore_option, drift_delay=drift_delay,
+                                    grace_period=grace_period, checkpoint_freq=checkpoint_freq, **self.columns_args)
 
     def get_seq_len(self):
         return self.seq_len
@@ -228,13 +236,15 @@ class MagicNet:
 
         self.x_batch.append(x)
         self.y_batch.append(y)
-        self.cont += 1
+        self.data_point_counter += 1
         if self.manager.in_expansion is True:
             self.manager.update_metrics(y)
         if len(self.x_batch) == self.batch_size:
             self.learn_many(np.array(self.x_batch), np.array(self.y_batch))
             self.x_batch = []
             self.y_batch = []
+        else:
+            self.manager.update_counter(self.data_point_counter)
         return None
 
     def add_new_column(self, task_id=None):
@@ -295,7 +305,7 @@ class MagicNet:
         x, y, _ = self._load_batch(x, y)
         y = y[self.seq_len - 1 :]
 
-        perf_train = self.manager.train(x, y)
+        perf_train = self.manager.train(x, y, counter=self.data_point_counter)
 
         return perf_train
 
@@ -339,7 +349,7 @@ class MagicNet:
             self.previous_data_points_anytime_hidden = previous_data_points
         return x
 
-    def predict_one(self, x: np.array, previous_data_points: np.array = None):
+    def predict_one(self, x: np.array, previous_data_points: np.array = None, task_id=None):
         """
         It performs prediction on a single data point.
 
@@ -360,7 +370,7 @@ class MagicNet:
         if x is None:
             return None
         with torch.no_grad():
-            pred, _ = get_pred_from_outputs(self.manager.predict_one(x))
+            pred, _ = get_pred_from_outputs(self.manager.predict_one(x, task_id=task_id))
             pred = int(pred[-1].detach().cpu().numpy())
         return pred
 
@@ -374,3 +384,6 @@ class MagicNet:
                 size += compute_model_size(self.manager.ensemble[k])
             return size
         return compute_model_size(self.manager.model)
+
+    def get_seq_len(self):
+        return self.seq_len

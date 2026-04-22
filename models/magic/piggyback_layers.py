@@ -282,92 +282,80 @@ class ElementWiseGRU(nn.Module):
     def expand_hidden(self, addendum):
         """
         Parameters are expanded by a factor of "addendum". New weights are initialized normally while
-        previously learned ones are kept and frozen
-
-        Input:
-            addendum: factor by which the hidden size is expanded
-
-        Output:
-            freeze_masks: newly created freeze masks based on the new size
+        previously learned ones are kept and frozen.
+        Rispettando la struttura a 3 porte (Reset, Update, New) della GRU.
         """
+        old_hidden_size = self.hidden_size
         self.hidden_size = round(self.hidden_size + addendum)
         freeze_masks = {}
 
+        # 1. Creiamo i nuovi tensori
         temp_weight_ih = torch.Tensor(3 * self.hidden_size, self.input_size).uniform_(
             -sqrt(1 / self.hidden_size), sqrt(1 / self.hidden_size)
         )
-        freeze_masks["weight_ih"] = torch.zeros_like(temp_weight_ih)
-
         temp_weight_hh = torch.Tensor(3 * self.hidden_size, self.hidden_size).uniform_(
             -sqrt(1 / self.hidden_size), sqrt(1 / self.hidden_size)
         )
-        freeze_masks["weight_hh"] = torch.zeros_like(temp_weight_hh)
-
         temp_bias_ih_l0 = torch.Tensor(3 * self.hidden_size).uniform_(
             -sqrt(1 / self.hidden_size), sqrt(1 / self.hidden_size)
         )
-        freeze_masks["bias_ih_l0"] = torch.zeros_like(temp_bias_ih_l0)
-
         temp_bias_hh_l0 = torch.Tensor(3 * self.hidden_size).uniform_(
             -sqrt(1 / self.hidden_size), sqrt(1 / self.hidden_size)
         )
+
+        freeze_masks["weight_ih"] = torch.zeros_like(temp_weight_ih)
+        freeze_masks["weight_hh"] = torch.zeros_like(temp_weight_hh)
+        freeze_masks["bias_ih_l0"] = torch.zeros_like(temp_bias_ih_l0)
         freeze_masks["bias_hh_l0"] = torch.zeros_like(temp_bias_hh_l0)
 
-        temp_weight_ih[: self.weight_ih.size(0), : self.weight_ih.size(1)].copy_(
-            self.weight_ih
-        )
-        freeze_masks["weight_ih"][
-            : self.weight_ih.size(0), : self.weight_ih.size(1)
-        ].fill_(1)
+        for i in range(3):
+            old_start = i * old_hidden_size
+            old_end = (i + 1) * old_hidden_size
+            new_start = i * self.hidden_size
+            new_end = new_start + old_hidden_size
+
+            temp_weight_ih[new_start:new_end, :].copy_(self.weight_ih[old_start:old_end, :])
+            freeze_masks["weight_ih"][new_start:new_end, :].fill_(1)
+
+            temp_weight_hh[new_start:new_end, :old_hidden_size].copy_(self.weight_hh[old_start:old_end, :])
+            freeze_masks["weight_hh"][new_start:new_end, :old_hidden_size].fill_(1)
+
+            temp_bias_ih_l0[new_start:new_end].copy_(self.bias_ih_l0[old_start:old_end])
+            freeze_masks["bias_ih_l0"][new_start:new_end].fill_(1)
+
+            temp_bias_hh_l0[new_start:new_end].copy_(self.bias_hh_l0[old_start:old_end])
+            freeze_masks["bias_hh_l0"][new_start:new_end].fill_(1)
+
         self.weight_ih = Parameter(temp_weight_ih)
-
-        temp_weight_hh[: self.weight_hh.size(0), : self.weight_hh.size(1)].copy_(
-            self.weight_hh
-        )
-        freeze_masks["weight_hh"][
-            : self.weight_hh.size(0), : self.weight_hh.size(1)
-        ].fill_(1)
         self.weight_hh = Parameter(temp_weight_hh)
-
-        temp_bias_ih_l0[: self.bias_ih_l0.size(0)].copy_(self.bias_ih_l0)
-        freeze_masks["bias_ih_l0"][: self.bias_ih_l0.size(0)].fill_(1)
         self.bias_ih_l0 = Parameter(temp_bias_ih_l0)
-
-        temp_bias_hh_l0[: self.bias_hh_l0.size(0)].copy_(self.bias_hh_l0)
-        freeze_masks["bias_hh_l0"][: self.bias_hh_l0.size(0)].fill_(1)
         self.bias_hh_l0 = Parameter(temp_bias_hh_l0)
 
-        # Initialize real-valued mask weights.
         self.h0 = np.zeros((1, self.hidden_size))
-
-        # Adjust piggymasks based on the new size
         self.adjust_piggymask(mask_scale=self.mask_scale, freeze_masks=freeze_masks)
 
         return freeze_masks
 
     def adjust_piggymask(self, mask_scale, freeze_masks):
-        temp_mask_real_weight_ih = self.weight_ih.data.new(self.weight_ih.size())
-        temp_mask_real_weight_hh = self.weight_hh.data.new(self.weight_hh.size())
-        temp_mask_real_bias_ih_l0 = self.weight_ih.data.new(self.bias_ih_l0.size())
-        temp_mask_real_bias_hh_l0 = self.weight_hh.data.new(self.bias_hh_l0.size())
+        old_hidden_size = self.mask_real_weight_ih.size(0) // 3
 
-        temp_mask_real_weight_ih.fill_(mask_scale)
-        temp_mask_real_weight_hh.fill_(mask_scale)
-        temp_mask_real_bias_ih_l0.fill_(mask_scale)
-        temp_mask_real_bias_hh_l0.fill_(mask_scale)
+        temp_mask_real_weight_ih = self.weight_ih.data.new(self.weight_ih.size()).fill_(mask_scale)
+        temp_mask_real_weight_hh = self.weight_hh.data.new(self.weight_hh.size()).fill_(mask_scale)
+        temp_mask_real_bias_ih_l0 = self.weight_ih.data.new(self.bias_ih_l0.size()).fill_(mask_scale)
+        temp_mask_real_bias_hh_l0 = self.weight_hh.data.new(self.bias_hh_l0.size()).fill_(mask_scale)
 
-        temp_mask_real_weight_ih[
-            : self.mask_real_weight_ih.size(0), : self.mask_real_weight_ih.size(1)
-        ].copy_(self.mask_real_weight_ih)
-        temp_mask_real_weight_hh[
-            : self.mask_real_weight_hh.size(0), : self.mask_real_weight_hh.size(1)
-        ].copy_(self.mask_real_weight_hh)
-        temp_mask_real_bias_ih_l0[: self.mask_real_bias_ih_l0.size(0)].copy_(
-            self.mask_real_bias_ih_l0
-        )
-        temp_mask_real_bias_hh_l0[: self.mask_real_bias_hh_l0.size(0)].copy_(
-            self.mask_real_bias_hh_l0
-        )
+        # Trasloco a blocchi anche per le maschere continue!
+        for i in range(3):
+            old_start = i * old_hidden_size
+            old_end = (i + 1) * old_hidden_size
+            new_start = i * self.hidden_size
+            new_end = new_start + old_hidden_size
+
+            temp_mask_real_weight_ih[new_start:new_end, :].copy_(self.mask_real_weight_ih[old_start:old_end, :])
+            temp_mask_real_weight_hh[new_start:new_end, :old_hidden_size].copy_(
+                self.mask_real_weight_hh[old_start:old_end, :])
+            temp_mask_real_bias_ih_l0[new_start:new_end].copy_(self.mask_real_bias_ih_l0[old_start:old_end])
+            temp_mask_real_bias_hh_l0[new_start:new_end].copy_(self.mask_real_bias_hh_l0[old_start:old_end])
 
         self.mask_real_weight_ih = Parameter(temp_mask_real_weight_ih)
         self.mask_real_weight_hh = Parameter(temp_mask_real_weight_hh)
@@ -502,7 +490,7 @@ class ElementWiseLinear(nn.Module):
             self.initialize_piggymask(mask_init, mask_scale, freeze_mask=freeze_masks)
 
     def reinit_linear_bias(self):
-        if self.bias != None:
+        if self.bias is not None:
             self.bias = Parameter(
                 torch.Tensor(self.out_features).uniform_(
                     -sqrt(1 / self.in_features), sqrt(1 / self.in_features)
@@ -545,7 +533,7 @@ class ElementWiseLinear(nn.Module):
         temp_weight[: self.weight.size(0), : self.weight.size(1)].copy_(self.weight)
         freeze_mask["weight"][: self.weight.size(0), : self.weight.size(1)].fill_(1)
         self.weight = Parameter(temp_weight)
-        if self.bias != None:
+        if self.bias is not None:
             self.bias = Parameter(
                 torch.Tensor(self.out_features).uniform_(
                     -sqrt(1 / self.in_features), sqrt(1 / self.in_features)

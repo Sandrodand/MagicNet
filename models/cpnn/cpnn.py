@@ -40,8 +40,8 @@ class cPNN:
         qcpnn: bool = False,
         initial_task_id: int = 1,
         batch_size: int = 128,
-        save_column_freq: int = None,
-        drift_delay: int = 5 * 10**3,
+        save_column_freq: int = 1500,
+        drift_delay: int = 3000,
         reset_data_points: bool = False,
         **kwargs,
     ):
@@ -80,9 +80,9 @@ class cPNN:
             The training mini-batch size. If calling learn_one method, the model will accumulate batch_size data point
             before performing the training.
         save_column_freq: int, default: None
-            The frequency at which the model stores the current state of the last column. Since the drift detector
-            may have a delay, before adding a new column, the stored state of the last column is restored. This avoids
-            to use a column that does not represent the concept.
+            The frequency (in number of training minibatches) at which the model stores the current state of the last
+            column. Since the drift detector may have a delay, before adding a new column, the stored state of the
+            last column is restored. This avoids o use a column that does not represent the concept.
         drift_delay: int, default: 5000
             The maximum delay that the drift detector can have to detect drifts. It is used to store the current state
             of the last column.
@@ -131,6 +131,7 @@ class cPNN:
         self.saved_columns = []
         self.drift_delay = drift_delay
         self.cont = 1
+        self.batch_cont = 0
         self.train_cont = [0]
         self.reset_data_points = reset_data_points
         self.last_ts_train = -1
@@ -157,6 +158,7 @@ class cPNN:
         -------
 
         """
+        print("SET SAV FREQ", save_column_freq)
         self.save_column_freq = save_column_freq
         if self.save_column_freq is None:
             self.saved_columns = []
@@ -315,17 +317,21 @@ class cPNN:
                 self.learn_many(np.array(self.x_batch), np.array(self.y_batch))
                 self.x_batch = []
                 self.y_batch = []
+                self.batch_cont += 1
             if self.save_column_freq is not None:
                 if self.cont % self.save_column_freq == 0:
                     self.saved_columns.append(
                         {
                             "cont": self.cont,
+                            "batch_cont": self.batch_cont,
                             "column": pickle.loads(
                                 pickle.dumps(self.columns.columns[-1])
                             ),
                         }
                     )
-                    self.saved_columns = self.saved_columns[-4:]
+                    max_keep = int((self.drift_delay / self.save_column_freq) + 2)
+                    max_keep = max(4, max_keep)
+                    self.saved_columns = self.saved_columns[-max_keep:]
             return None
         x = np.array(x).reshape(1, -1)
         y = np.array(y).reshape(1, -1)

@@ -10,6 +10,7 @@ from models.crnn.clstm import cLSTMLinear
 from models.cpnn.cpnn import cPNN
 from models.magic.magic_net import MagicNet
 from models.sml.temporally_augmented_classifier import TemporallyAugmentedClassifier
+from models.sml.temporally_augmented_features_classifier import TemporallyAugmentedFeaturesClassifier
 
 
 class Config:
@@ -188,31 +189,28 @@ class Config:
             acpnn=True,
             qcpnn=False,
             batch_size=self.batch_size,
-            save_column_freq=2 * 10**3,
+            save_column_freq=1500,
+            drift_delay=3000,
             input_size=self.num_features,
             output_size=self.output_size,
             hidden_size=self.hidden_size,
         )
 
     def create_magic_net(self):
-        return MagicNet(
-            device="cpu",
-            seq_len=self.seq_len,
-            mask_init=self.mask_init,
-            input_size=self.num_features,
-            train_verbose=False,
-            batch_size=self.batch_size,
-            threshold_fn=self.threshold_fn,
-            hidden_size=self.hidden_size,
-            hidden_mult=self.hidden_mult,
-            ensemble_batches=self.ensemble_batches,
-            ensemble_th=self.ensemble_th,
-            ensemble_mode="last",
-            cGRU_weights=self.base_learner.get_base_learner(),
-            output_size=self.output_size,
-            cap_sigmoid=True,
-            expand_last=False,
-        )
+        return MagicNet(device="cpu", seq_len=self.seq_len, mask_init=self.mask_init, input_size=self.num_features,
+                        train_verbose=False, initial_task_id=1, batch_size=self.batch_size,
+                        threshold_fn=self.threshold_fn, hidden_size=self.hidden_size, hidden_mult=self.hidden_mult,
+                        ensemble_batches=self.ensemble_batches, ensemble_th=self.ensemble_th,
+                        cgru_weights=self.base_learner.get_base_learner(), cap_sigmoid=True, multi_head=True,
+                        ignore_option=True, output_size=self.output_size, drift_delay=3000, checkpoint_freq=1500)
+
+    def create_magic_net_no_rollback(self):
+        return MagicNet(device="cpu", seq_len=self.seq_len, mask_init=self.mask_init, input_size=self.num_features,
+                        train_verbose=False, initial_task_id=1, batch_size=self.batch_size,
+                        threshold_fn=self.threshold_fn, hidden_size=self.hidden_size, hidden_mult=self.hidden_mult,
+                        ensemble_batches=self.ensemble_batches, ensemble_th=self.ensemble_th,
+                        cgru_weights=self.base_learner.get_base_learner(), cap_sigmoid=True, multi_head=True,
+                        ignore_option=True, output_size=self.output_size, drift_delay=3000, checkpoint_freq=None)
 
     def callback_func_cl(self, **kwargs):
         if "iteration" in kwargs:
@@ -312,6 +310,53 @@ class Config:
             evaluator=self.create_arf_no_adwin(),
         )
 
+    @staticmethod
+    def create_hat():
+        return tree.HoeffdingAdaptiveTreeClassifier(
+            grace_period=100,
+            delta=1e-5,
+            leaf_prediction="nb",
+            nb_threshold=10,
+        )
+
+    def create_hat_ta(self):
+        return TemporallyAugmentedClassifier(
+            base_learner=self.create_hat(),
+            num_old_labels=self.ta_order,
+        )
+
+    @staticmethod
+    def create_arf():
+        return forest.ARFClassifier(leaf_prediction="nb")
+
+    @staticmethod
+    def create_arf_no_adwin():
+        return forest.ARFClassifier(
+            leaf_prediction="nb", drift_detector=None, warning_detector=None
+        )
+
+    def create_arf_ta(self):
+        return TemporallyAugmentedClassifier(
+            base_learner=self.create_arf(),
+            num_old_labels=self.ta_order,
+        )
+
+    def create_arf_ta_no_adwin(self):
+        return TemporallyAugmentedClassifier(
+            base_learner=self.create_arf_no_adwin(),
+            num_old_labels=self.ta_order,
+        )
+
+    def create_arf_ta_features(self):
+        return TemporallyAugmentedFeaturesClassifier(
+            base_learner=self.create_arf(), ta_order=self.ta_order
+        )
+
+    def create_arf_ta_features_no_adwin(self):
+        return TemporallyAugmentedFeaturesClassifier(
+            base_learner=self.create_arf_no_adwin(), ta_order=self.ta_order
+        )
+
 
 class BaseLearner:
     def __init__(self, learner_func):
@@ -323,7 +368,7 @@ class BaseLearner:
 
     def get_cpnn(self):
         model: cPNN = pickle.loads(pickle.dumps(self.base_learner))
-        model.set_save_column_freq(save_column_freq=None)
+        #model.set_save_column_freq(save_column_freq=None)
         return model
 
     def reset_base_learner(self):

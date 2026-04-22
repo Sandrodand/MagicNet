@@ -3,11 +3,10 @@ import numpy as np
 import torch
 from river import metrics
 import copy
-from models.magic.cgru_from_masks import cGRUFromMasks
 
 
 class InferenceMagicNet:
-    def __init__(self, model: MagicNet, ensemble_data_points=128 * 2, quantize=False):
+    def __init__(self, model: MagicNet, ensemble_data_points=128 * 10):
         """
         It implements a wrapper on a MAGIC Net model to perform inference when the task label is not known.
         It builds an ensemble that considers all the saved PiggyMasks of a given GIN model. On the i-th data point of the test
@@ -22,9 +21,7 @@ class InferenceMagicNet:
             Number of data points after which to choose the best model in the ensemble during the inference mode.
             Use -1 to keep the ensemble during the entire inference phase.
         """
-        self.model: MagicNet = model
-        self.quantize = quantize
-        self.inference_model = copy.deepcopy(model)
+        self.model: MagicNet = copy.deepcopy(model)
         self._previous_data_points = None
         self.metrics = None
         self.no_preparation = False
@@ -53,9 +50,8 @@ class InferenceMagicNet:
         """
         self.predictions[timestamp] = []
         for m in self.models:
-            self.inference_model.manager.model = m
             self.predictions[timestamp].append(
-                self.inference_model.predict_one(
+                m.predict_one(
                     x,
                     previous_data_points=self._previous_data_points,
                 )
@@ -96,85 +92,44 @@ class InferenceMagicNet:
             self.selected = 0
             self.predictions = {}
 
-    def prepare_masks(self):
-        sigmoid = torch.nn.Sigmoid()
-        conf = {torch.nn.GRU, torch.nn.Linear}
+    def prepare_task_models(self):
+        """
+        Crea una copia indipendente del modello per ogni task storico,
+        applica la maschera corrispondente una volta sola e lo congela.
+        """
         models = []
-        if len(self.model.manager.mask_list) == 1:
-            return [self.model.manager.model]
-        weights = {}
-        newmasks = {}
-        for name, mask in self.model.manager.mask_list[1].items():
-            size = mask.size()
-            if name == "weight":
-                module = 1
-            else:
-                module = 0
-            if len(size) == 1:
-                weights[name] = getattr(
-                    self.model.manager.model.classifier[module], name
-                )[: size[0]]
-            else:
-                weights[name] = getattr(
-                    self.model.manager.model.classifier[module], name
-                )[: size[0], : size[1]]
-            newmasks[name] = sigmoid(mask)
-        cGRU = cGRUFromMasks(
-            weights=weights,
-            masks=newmasks,
-            bias=self.model.manager.biases[0],
-            device=self.model.device,
-        )
-        if self.quantize:
-            cGRU = torch.quantization.quantize_dynamic(cGRU, conf, dtype=torch.qint8)
-        models.append(cGRU)
-        weights = {}
-        newmasks = {}
-        for biases, masks in zip(
-            self.model.manager.biases[1:], self.model.manager.piggymask_list[1:]
-        ):
-            for name, mask in masks.items():
-                name = name.replace("mask_real_", "")
-                size = mask.size()
-                if name == "weight":
-                    module = 1
-                else:
-                    module = 0
-                if len(size) == 1:
-                    weights[name] = getattr(
-                        self.model.manager.model.classifier[module], name
-                    )[: size[0]]
-                else:
-                    weights[name] = getattr(
-                        self.model.manager.model.classifier[module], name
-                    )[: size[0], : size[1]]
-                newmasks[name] = mask
+        num_tasks = len(self.model.manager.mask_list)
 
-            cGRU = cGRUFromMasks(
-                weights=weights, masks=newmasks, bias=biases, device=self.model.device
-            )
-            if self.quantize:
-                cGRU = torch.quantization.quantize_dynamic(
-                    cGRU, conf, dtype=torch.qint8
-                )
-            models.append(cGRU)
-        models.append(self.model.manager.model)
+        for task_id in range(1, num_tasks + 1):
+            task_model = copy.deepcopy(self.model)
 
+            if task_id in task_model.manager.forgotten_models:
+                task_model.manager.model = copy.deepcopy(task_model.manager.forgotten_models[task_id])
+                task_model.manager.model.eval()
+            else:
+                task_model.manager.model.eval()
+                idx = task_id - 1
+                if idx < len(task_model.manager.piggymask_list):
+                    historical_mask = task_model.manager.piggymask_list[idx]
+                    task_model.manager.model.reinit_piggymask(mask_init="random", masks=historical_mask)
+            task_model.manager.curr_task_idx = task_id
+            models.append(task_model)
         return models
 
     def initialize(self):
         self.predictions = {}
 
-        self.models = self.prepare_masks()
+        self.models = self.prepare_task_models()
         self.metrics = [
-            metrics.CohenKappa() for _ in range(len(self.model.manager.mask_list))
+            metrics.CohenKappa() for _ in range(len(self.models))
         ]
 
         self.selected = len(self.models) - 1
         self.count = 0
 
     def reset_previous_data_points(self):
-        self.inference_model.reset_previous_data_points()
+        for m in self.models:
+            m.reset_previous_data_points()
         self._previous_data_points = None
         self.predictions = {}
         self.initialize()
