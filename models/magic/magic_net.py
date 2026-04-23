@@ -257,7 +257,7 @@ class MagicNet:
         task_id: int, default: None
             The id of the new task. If None it increments the last one.
         """
-        if self.manager.in_expansion:
+        if self.manager.in_expansion or self.manager.in_grace_period:
             self.manager.add_new_column(None)
             return
 
