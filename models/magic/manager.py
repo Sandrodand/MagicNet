@@ -251,6 +251,9 @@ class MagicManager(object):
                 return models[-1]["model"]
         return pickle.loads(pickle.dumps(self.model))
 
+    def force_decision(self):
+        self._decide_best_model()
+
     def _decide_best_model(self):
         for name, item in self.current_perf.items():
             print(name, " performance: ", item)

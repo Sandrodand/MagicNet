@@ -2,7 +2,6 @@ from models.magic.magic_net import MagicNet
 import numpy as np
 import torch
 from river import metrics
-from river import utils
 import pickle
 from collections import deque
 
@@ -135,20 +134,28 @@ class InferenceMagicNet:
         applica la maschera corrispondente una volta sola e lo congela.
         """
         models = []
-
+        model_copy =  pickle.loads(pickle.dumps(self.model))
+        if model_copy.manager.in_expansion:
+            model_copy.manager.force_decision()
+        model_copy.manager.in_grace_period = False
+        model_copy.manager.in_expansion = False
         for task_id in range(1, self.model.manager.curr_task_idx + 1):
-            task_model = pickle.loads(pickle.dumps(self.model))
-            task_model.manager.in_expansion = False
-            task_model.manager.in_grace_period = False
-
+            task_model = pickle.loads(pickle.dumps(model_copy))
             if task_id in task_model.manager.forgotten_models:
                 task_model.manager.model = pickle.loads(pickle.dumps(task_model.manager.forgotten_models[task_id]))
                 task_model.manager.model.eval()
             else:
                 task_model.manager.model.eval()
                 if task_id in task_model.manager.piggymask_list:
-                    historical_mask = task_model.manager.piggymask_list[task_id]
+                    historical_mask = pickle.loads(pickle.dumps(task_model.manager.piggymask_list[task_id]))
                     task_model.manager.model.reinit_piggymask(mask_init="random", masks=historical_mask)
+                if not task_model.manager.multi_head and task_id in task_model.manager.biases:
+                    historical_bias = pickle.loads(pickle.dumps(task_model.manager.biases[task_id]))
+                    if historical_bias is not None:
+                        # Lo ricolleghiamo forzatamente come parametro sul device corretto
+                        task_model.manager.model.classifier[1].bias = torch.nn.Parameter(
+                            historical_bias.clone().to(task_model.manager.model.device)
+                        )
             task_model.manager.curr_task_idx = task_id
             models.append(task_model)
         return models
