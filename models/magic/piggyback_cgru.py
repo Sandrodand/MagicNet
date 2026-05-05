@@ -109,7 +109,8 @@ class PiggyBackGRU(nn.Module):
             if not previous:
                 self.heads[str(task_id)] = nn.Linear(self.hidden_size, self.output_size).to(self.device)
             else:
-                self.heads[str(task_id)] = copy.deepcopy(self.heads[str(task_id-1)])
+                last_head_key = list(self.heads.keys())[-1]
+                self.heads[str(task_id)] = copy.deepcopy(self.heads[last_head_key])
 
     def _pad_historical_masks(self, historical_masks):
         """
@@ -187,24 +188,20 @@ class PiggyBackGRU(nn.Module):
         return freeze_mask
 
     def get_piggymasks(self):
-        if self.cap_sigmoid:
-            sigmoid = CappedSigmoid()
-        else:
-            sigmoid = nn.Sigmoid()
         piggymasks = {}
 
-        piggymasks["mask_real_weight_ih"] = sigmoid(
+        piggymasks["mask_real_weight_ih"] = self.classifier[0].threshold_fn(
             self.classifier[0].mask_real_weight_ih
-        )
-        piggymasks["mask_real_weight_hh"] = sigmoid(
+        ).detach().clone()
+        piggymasks["mask_real_weight_hh"] = self.classifier[0].threshold_fn(
             self.classifier[0].mask_real_weight_hh
-        )
-        piggymasks["mask_real_bias_ih_l0"] = sigmoid(
+        ).detach().clone()
+        piggymasks["mask_real_bias_ih_l0"] = self.classifier[0].threshold_fn(
             self.classifier[0].mask_real_bias_ih_l0
-        )
-        piggymasks["mask_real_bias_hh_l0"] = sigmoid(
+        ).detach().clone()
+        piggymasks["mask_real_bias_hh_l0"] = self.classifier[0].threshold_fn(
             self.classifier[0].mask_real_bias_hh_l0
-        )
+        ).detach().clone()
         if not self.multi_head:
-            piggymasks["mask_real_weight"] = sigmoid(self.classifier[1].mask_real_weight)
+            piggymasks["mask_real_weight"] = self.classifier[1].threshold_fn(self.classifier[1].mask_real_weight).detach().clone()
         return piggymasks

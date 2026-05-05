@@ -3,19 +3,17 @@ from torch import nn as nn, Tensor
 
 CAP_VALUE = 13.8
 
-
 class BinarizerFunction(torch.autograd.Function):
     @staticmethod
     def forward(ctx, inputs, threshold):
-        outputs = inputs.clone()
-        outputs[inputs < -threshold] = -1
-        outputs[inputs > threshold] = 1
+        # Straight-through estimator: genera 1 se > threshold, altrimenti 0
+        outputs = torch.zeros_like(inputs)
+        outputs[inputs >= threshold] = 1.0
         return outputs
 
     @staticmethod
     def backward(ctx, grad_output):
-        # Straight-through estimator: pass gradients through unchanged
-        return grad_output, None  # None for the threshold
+        return grad_output, None
 
 
 class Binarizer(nn.Module):

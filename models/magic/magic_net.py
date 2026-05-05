@@ -32,6 +32,7 @@ class MagicNet:
         cap_sigmoid=True,
         multi_head=True,
         ignore_option=True,
+        expand_option=True,
         checkpoint_freq=1500,
         drift_delay=3000,
         grace_period=5000,
@@ -89,10 +90,6 @@ class MagicNet:
             Used to pass pre-initialized weights to the cRNN. If None they are initialized as usual
         cap_sigmoid: bool, default: True.
             True if you want to return 1 as sigmoid value for input exceeding the cap_value.
-        expand_last: bool, default: False.
-            True if you want to add to the ensemble crated after a drift the option that expands the hidden size
-            by starting from the previous concept's masks. If False the ensemble will contain only the expand option
-            that randomly initialized all the masks.
         kwargs:
             Parameters of column_class.
         """
@@ -131,6 +128,8 @@ class MagicNet:
         self.data_point_counter = 1
         self.reset_data_points = reset_data_points
         self.grace_period = grace_period
+        self.ignore_option = ignore_option
+        self.expand_option = expand_option
 
         self.checkpoint_freq = checkpoint_freq
 
@@ -138,7 +137,7 @@ class MagicNet:
                                     mask_init=mask_init, hidden_size=hidden_size, hidden_mult=hidden_mult,
                                     ensemble_th=ensemble_th, cgru_weights=cgru_weights, cap_sigmoid=cap_sigmoid,
                                     multi_head=self.multihead,
-                                    ignore_option=ignore_option, drift_delay=drift_delay,
+                                    ignore_option=ignore_option, expand_option=expand_option, drift_delay=drift_delay,
                                     grace_period=grace_period, checkpoint_freq=checkpoint_freq, **self.columns_args)
 
     def get_seq_len(self):

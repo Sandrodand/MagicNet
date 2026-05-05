@@ -1,5 +1,4 @@
 from river import metrics
-import copy
 import pickle
 
 from evaluation.evaluation_utils import compute_model_size
@@ -34,6 +33,7 @@ class MagicManager(object):
         output_size=2,
         multi_head=True,
         ignore_option=True,
+        expand_option=True,
         checkpoint_freq=None,
         drift_delay=None,
         grace_period=None
@@ -50,6 +50,7 @@ class MagicManager(object):
         self.data_point_counter = 0
         self.multi_head = multi_head
         self.ignore_option = ignore_option
+        self.expand_option = expand_option
         self.checkpoint_freq = checkpoint_freq
         self.checkpoints = []
         self.grace_period = grace_period
@@ -66,13 +67,13 @@ class MagicManager(object):
         self.ensemble_th = ensemble_th
         self.ensemble_choices = []
         self.ensemble_perf = []
-        self.biases = []
+        self.biases = {}
         self.cap_sigmoid = cap_sigmoid
         self.output_size = output_size
 
         self.current_perf = {}
         self.in_expansion = False
-        self.piggymask_list = [] # Piggymasks of previous tasks
+        self.piggymask_list = {} # Piggymasks of previous tasks
         self.mask_list = {} # Masks used for freezing parameters
         self.criterion = torch.nn.CrossEntropyLoss(reduction="mean")
         self.criterion.to(self.device)
@@ -119,11 +120,11 @@ class MagicManager(object):
         return torch.optim.Adam(model.parameters(), lr=self.lr)
 
     def store_masks_biases(self):
-        self.piggymask_list.append(self.model.get_piggymasks())
+        self.piggymask_list[self.curr_task_idx] = pickle.loads(pickle.dumps(self.model.get_piggymasks()))
         if not self.multi_head:
-            self.biases.append(pickle.loads(pickle.dumps(self.model.classifier[1].bias)))
+            self.biases[self.curr_task_idx] = pickle.loads(pickle.dumps(self.model.classifier[1].bias))
         else:
-            self.biases.append(None)
+            self.biases[self.curr_task_idx] = None
         if self.in_expansion:
             self._decide_best_model()
 
@@ -166,62 +167,63 @@ class MagicManager(object):
         self.ensemble_counter = 0
 
         # Store the model for the ignore option
-        current_model_copy = copy.deepcopy(self.model)
+        current_model_copy = pickle.loads(pickle.dumps(self.model))
         if self.multi_head:
             current_model_copy.add_task_head(task_id, previous=True)
-        current_freeze_mask = copy.deepcopy(self.mask_list[task_id - 1])
+        current_freeze_mask = pickle.loads(pickle.dumps(self.mask_list[task_id - 1]))
 
         # Restore previous state
         self.model = self.get_previous_state()
-        self.previous_model_state = copy.deepcopy(self.model)
+        self.previous_model_state = pickle.loads(pickle.dumps(self.model))
         self.curr_task_idx = task_id
 
         # Freeze the past
         for mask in self.mask_list[task_id - 1].values():
             mask.fill_(1)
-        self.piggymask_list.append(self.model.get_piggymasks())
+        self.piggymask_list[task_id-1] = self.model.get_piggymasks()
         if not self.multi_head:
-            self.biases.append(pickle.loads(pickle.dumps(self.model.classifier[1].bias)))
+            self.biases[task_id-1] = pickle.loads(pickle.dumps(self.model.classifier[1].bias))
         else:
-            self.biases.append(None)
+            self.biases[task_id-1] = None
         if self.multi_head:
             self.model.add_task_head(task_id)
 
         # Reinitialize piggymasks
         self.model.reinit_piggymask(
-            self.mask_init, freeze_masks=self.mask_list[task_id - 1]
+            self.mask_init, freeze_masks=pickle.loads(pickle.dumps(self.mask_list[task_id - 1]))
         )
 
         # Create ensemble:
         # "PiggyMask" stays the same and we just train the piggymask
         # "Expand" expands the hidden size
 
-        self.ensemble["PiggyMask"] = copy.deepcopy(self.model)
+        self.ensemble["PiggyMask"] = pickle.loads(pickle.dumps(self.model))
         self.ensemble["PiggyMask"].reinit_linear_bias()
-        self.ensemble_masks["PiggyMask"] = self.mask_list[task_id - 1]
+        self.ensemble_masks["PiggyMask"] = pickle.loads(pickle.dumps(self.mask_list[task_id - 1]))
         self.current_perf["PiggyMask"] = metrics.CohenKappa()
         self.ensemble_optims["PiggyMask"] = self._create_optimizer(
             self.ensemble["PiggyMask"]
         )
 
-        self.ensemble["Expand"] = copy.deepcopy(self.model)
-        self.ensemble_masks["Expand"] = self.ensemble["Expand"].expand_hidden(
-            self.hidden_mult
-        )
-        self.current_perf["Expand"] = metrics.CohenKappa()
-        self.ensemble_optims["Expand"] = self._create_optimizer(self.ensemble["Expand"])
+        if self.expand_option:
+            self.ensemble["Expand"] = pickle.loads(pickle.dumps(self.model))
+            self.ensemble_masks["Expand"] = self.ensemble["Expand"].expand_hidden(
+                self.hidden_mult
+            )
+            self.current_perf["Expand"] = metrics.CohenKappa()
+            self.ensemble_optims["Expand"] = self._create_optimizer(self.ensemble["Expand"])
 
         # From the third concept the ensemble is enlarged based on the mode chosen
 
         if self.previous_piggy:
-            self.ensemble["PiggyMask_last"] = copy.deepcopy(self.ensemble["PiggyMask"])
+            self.ensemble["PiggyMask_last"] = pickle.loads(pickle.dumps(self.ensemble["PiggyMask"]))
             # Reinitialize piggymasks with the ones from the previous concept
             self.ensemble["PiggyMask_last"].reinit_piggymask(
                 self.mask_init,
-                freeze_masks=self.mask_list[task_id - 1],
-                masks=self.piggymask_list[-1],
+                freeze_masks=pickle.loads(pickle.dumps(self.mask_list[task_id - 1])),
+                masks=pickle.loads(pickle.dumps(self.piggymask_list[task_id-1])),
             )
-            self.ensemble_masks["PiggyMask_last"] = self.mask_list[task_id - 1]
+            self.ensemble_masks["PiggyMask_last"] = pickle.loads(pickle.dumps(self.mask_list[task_id - 1]))
             self.current_perf["PiggyMask_last"] = metrics.CohenKappa()
             self.ensemble_optims["PiggyMask_last"] = self._create_optimizer(
                 self.ensemble["PiggyMask_last"]
@@ -247,7 +249,7 @@ class MagicManager(object):
             if len(models) > 0:
                 self.checkpoints = []
                 return models[-1]["model"]
-        return copy.deepcopy(self.model)
+        return pickle.loads(pickle.dumps(self.model))
 
     def _decide_best_model(self):
         for name, item in self.current_perf.items():
@@ -260,11 +262,13 @@ class MagicManager(object):
             non_expand_options.append("PiggyMask_last")
         bestpiggy = max(non_expand_options, key=lambda k: self.current_perf[k].get())
 
-        expand_options = ["Expand"]
-        bestexpand = max(expand_options, key=lambda k: self.current_perf[k].get())
-
-        if self.current_perf[bestexpand].get() > self.ensemble_th * self.current_perf[bestpiggy].get():
-            best_model = bestexpand
+        if self.expand_option:
+            expand_options = ["Expand"]
+            bestexpand = max(expand_options, key=lambda k: self.current_perf[k].get())
+            if self.current_perf[bestexpand].get() > self.ensemble_th * self.current_perf[bestpiggy].get():
+                best_model = bestexpand
+            else:
+                best_model = bestpiggy
         else:
             best_model = bestpiggy
 
@@ -273,7 +277,7 @@ class MagicManager(object):
             self.in_grace_period = True
             self.grace_period_counter = 0
         else:
-            self.forgotten_models[self.curr_task_idx-1] = copy.deepcopy(self.previous_model_state)
+            self.forgotten_models[self.curr_task_idx] = pickle.loads(pickle.dumps(self.previous_model_state))
 
         self.ensemble_choices.append(
             {
@@ -365,7 +369,7 @@ class MagicManager(object):
             self.checkpoints.append({
                 "data_point_counter": self.data_point_counter,
                 "training_counter": self.training_counter,
-                "model": copy.deepcopy(self.model)
+                "model": pickle.loads(pickle.dumps(self.model))
             })
             max_keep = int((self.drift_delay / self.checkpoint_freq) + 2)
             max_keep = max(4, max_keep)
