@@ -95,7 +95,7 @@ class DynamicCPNN:
         data_points_previous_concept: int = 1000,
         minimum_k_difference: float = 0.04,
         verbose: bool = True,
-        inference_ensemble_data_points: int = 10 * 128,
+        inference_ensemble_data_points: int = 500,
         recurrent_concepts: bool = False,
     ):
         """
