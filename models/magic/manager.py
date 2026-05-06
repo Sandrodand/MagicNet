@@ -280,7 +280,7 @@ class MagicManager(object):
             self.in_grace_period = True
             self.grace_period_counter = 0
         else:
-            self.forgotten_models[self.curr_task_idx] = pickle.loads(pickle.dumps(self.previous_model_state))
+            self.forgotten_models[self.curr_task_idx-1] = pickle.loads(pickle.dumps(self.previous_model_state))
 
         self.ensemble_choices.append(
             {
