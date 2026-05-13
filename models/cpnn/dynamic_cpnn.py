@@ -347,6 +347,7 @@ class DynamicCPNN:
                 self.ensemble = [selected_model]
                 self.metrics = [self.metrics[self.selected]]
                 self.choices.append(choice)
+                choice["pool_models_columns"] = [len(m.model.columns.columns) for m in self.models[1:]]
                 self.choices = sorted(self.choices, key=lambda c: c["cont"])
                 self.predictions = {}
                 self.selected = 0
