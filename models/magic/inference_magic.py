@@ -2,37 +2,8 @@ from models.magic.magic_net import MagicNet
 import numpy as np
 import torch
 from river import metrics
+import river.utils as river_utils
 import pickle
-from collections import deque
-
-
-class RollingCohenKappa:
-    """Wrapper custom per avere un Cohen Kappa a finestra mobile."""
-
-    def __init__(self, window_size=100):
-        self.window_size = window_size
-        self.y_true = deque(maxlen=window_size)
-        self.y_pred = deque(maxlen=window_size)
-
-    def update(self, y_true, y_pred):
-        self.y_true.append(y_true)
-        self.y_pred.append(y_pred)
-        return self
-
-    def get(self):
-        # Se non abbiamo ancora visto dati, il Kappa è 0
-        if not self.y_true:
-            return 0.0
-
-        # Ricalcoliamo il Kappa al volo sulla finestra attuale
-        kappa = metrics.CohenKappa()
-        for yt, yp in zip(self.y_true, self.y_pred):
-            kappa.update(yt, yp)
-        return kappa.get()
-
-    def reset(self):
-        self.y_true.clear()
-        self.y_pred.clear()
 
 
 class InferenceMagicNet:
@@ -166,7 +137,8 @@ class InferenceMagicNet:
         self.models = self.prepare_task_models()
         if self.rolling_window is not None:
             self.metrics = [
-                RollingCohenKappa(window_size=self.rolling_window) for _ in range(len(self.models))
+                river_utils.Rolling(metrics.CohenKappa, window_size=self.rolling_window)
+                for _ in range(len(self.models))
             ]
         else:
             self.metrics = [

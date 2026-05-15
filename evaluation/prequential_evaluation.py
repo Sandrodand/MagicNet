@@ -2,7 +2,8 @@ import pickle
 import datetime
 from typing import List, Iterable, Callable
 
-from river import metrics
+import river.metrics as river_metrics
+import river.utils as river_utils
 import os
 
 # from metrics.kappa_t import CohenKappaTemporal
@@ -10,7 +11,6 @@ import numpy as np
 
 from evaluation.buffer import Buffer
 from evaluation.learner_config import LearnerConfig
-
 
 def make_dir(path):
     if path is not None:
@@ -47,6 +47,7 @@ class EvaluatePrequential:
         initial_task=1,
         preprocessing_func=None,
         delay: int = 0,
+        rolling_window_batches = [10, 50]
     ):
         """
         Parameters
@@ -124,6 +125,11 @@ class EvaluatePrequential:
         self.suffix = suffix
         self.anytime_scenario = anytime_scenario
         self.periodic_scenario = periodic_scenario
+        self.rolling_window_batches = rolling_window_batches
+        if rolling_window_batches is not None:
+            self.rolling_metrics = [f"rolling_{w*self.batch_size}" for w in self.rolling_window_batches]
+        else:
+            self.rolling_metrics = []
         self._create_eval()
         self._mode = mode
         self.writing_freq = writing_frequency
@@ -205,7 +211,7 @@ class EvaluatePrequential:
                     [] for i in range(0, self._iterations)
                 ]
                 if scenario == "_anytime":
-                    metric_periods = ["all", "task"]
+                    metric_periods = ["all", "task"] + self.rolling_metrics
                 else:
                     metric_periods = ["batch"]
                 for t in metric_periods:
@@ -218,15 +224,24 @@ class EvaluatePrequential:
                         self._eval[name + scenario]["metrics"][t][metric] = []
                         for i in range(self._iterations):
                             self._eval[name + scenario]["metrics"][t][metric].append(
-                                self._get_metric(metric)
+                                self._get_metric(metric, t)
                             )
 
     @staticmethod
-    def _get_metric(metric):
-        if metric == "accuracy":
-            return metrics.BalancedAccuracy()
-        if metric == "kappa":
-            return metrics.CohenKappa()
+    def _get_metric(metric, metric_type):
+        rolling = None
+        if "rolling_" in metric_type:
+            rolling = int(metric_type.replace("rolling_", ""))
+        if rolling is None:
+            if metric == "accuracy":
+                return river_metrics.BalancedAccuracy()
+            if metric == "kappa":
+                return river_metrics.CohenKappa()
+        else:
+            if metric == "kappa":
+                return river_utils.Rolling(river_metrics.CohenKappa(), window_size=rolling)
+            if metric == "accuracy":
+                return river_utils.Rolling(river_metrics.Accuracy(), window_size=rolling)
         # if metric == 'kappa_t':
         #     return CohenKappaTemporal()
 
@@ -251,11 +266,12 @@ class EvaluatePrequential:
                 x_ = x
             model_name = model.name + "_anytime"
             if self.drift_supervised:
-                # reset 'task' metrics
+                # reset 'task' and 'rolling' metrics
                 for metric in self.metrics:
-                    self._eval[model_name]["metrics"]["task"][metric][
-                        iteration
-                    ] = self._get_metric(metric)
+                    for t in ["task"] + self.rolling_metrics:
+                        self._eval[model_name]["metrics"][t][metric][
+                            iteration
+                        ] = self._get_metric(metric, t)
                 self._perf[model_name]["drifts"][iteration].append(
                     len(self._perf[model_name]["all"][self.metrics[0]][iteration])
                 )
@@ -275,7 +291,7 @@ class EvaluatePrequential:
             self._predictions[model_name][iteration] += [y_hat]
             y_hat = 0 if y_hat is None else y_hat
             for metric in self.metrics:
-                for t in ["all", "task"]:
+                for t in ["all", "task"] + self.rolling_metrics:
                     # update the metrics
                     self._eval[model_name]["metrics"][t][metric][
                         iteration
@@ -312,14 +328,15 @@ class EvaluatePrequential:
             y_hat = 0 if y_hat is None else y_hat
             if self.drift_supervised:
                 for metric in self.metrics:
-                    self._eval[model_name_pred]["metrics"]["task"][metric][
-                        iteration
-                    ] = self._get_metric(metric)
+                    for t in ["task"] + self.rolling_metrics:
+                        self._eval[model_name_pred]["metrics"][t][metric][
+                            iteration
+                        ] = self._get_metric(metric, t)
                 self._perf[model_name_pred]["drifts"][iteration].append(
                     len(self._perf[model_name_pred]["all"][self.metrics[0]][iteration])
                 )
             for metric in self.metrics:
-                for t in ["all", "task"]:
+                for t in ["all", "task"] + self.rolling_metrics:
                     self._eval[model_name_pred]["metrics"][t][metric][
                         iteration
                     ] = self._eval[model_name_pred]["metrics"][t][metric][
@@ -432,7 +449,7 @@ class EvaluatePrequential:
                     for metric in self.metrics:
                         self._eval[model_name]["metrics"]["batch"][metric][
                             iteration
-                        ] = self._get_metric(metric)
+                        ] = self._get_metric(metric, t)
                 i += 1
             # reset the buffer for the next batch
             batch.clear()
