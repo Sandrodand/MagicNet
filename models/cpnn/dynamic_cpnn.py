@@ -347,7 +347,9 @@ class DynamicCPNN:
                 self.ensemble = [selected_model]
                 self.metrics = [self.metrics[self.selected]]
                 self.choices.append(choice)
-                choice["pool_models_columns"] = [len(m.model.columns.columns) for m in self.models[1:]]
+                choice["pool_models_columns"] = [
+                    len(m.model.columns.columns) for m in self.models[1:]
+                ]
                 self.choices = sorted(self.choices, key=lambda c: c["cont"])
                 self.predictions = {}
                 self.selected = 0
@@ -498,14 +500,6 @@ class DynamicCPNN:
                 self.concept_y["new"].clear()
             self.drift_cont = 0
             self.selected = 0
-            if self.verbose:
-                print(f"\nModels:")
-                for m in self.models:
-                    print(str(m), end=";\n")
-                print(f"\nEnsemble:")
-                for m in self.ensemble:
-                    print(str(m), end=";\n")
-                print()
 
     def inference_mode(self, mode: bool = True):
         """

@@ -9,6 +9,7 @@ def compute_model_size(model):
     os.remove(f"temp{sfx}.p")
     return size
 
+
 def _get_filtered_state(m):
     manager = m.manager
     curr_task_str = str(manager.curr_task_idx)
@@ -16,12 +17,13 @@ def _get_filtered_state(m):
     filtered_state = {}
 
     for key, tensor in full_state.items():
-        if key.startswith('heads.'):
-            if key.startswith(f'heads.{curr_task_str}.'):
+        if key.startswith("heads."):
+            if key.startswith(f"heads.{curr_task_str}."):
                 filtered_state[key] = tensor
         else:
             filtered_state[key] = tensor
     return filtered_state
+
 
 def compute_magic_size(models):
     size = 0

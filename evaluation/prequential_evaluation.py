@@ -11,6 +11,8 @@ import numpy as np
 
 from evaluation.buffer import Buffer
 from evaluation.learner_config import LearnerConfig
+from models.magic.magic_net import MagicNet
+
 
 def make_dir(path):
     if path is not None:
@@ -47,7 +49,7 @@ class EvaluatePrequential:
         initial_task=1,
         preprocessing_func=None,
         delay: int = 0,
-        rolling_window_batches = [10, 50]
+        rolling_window_batches=[10, 50],
     ):
         """
         Parameters
@@ -127,7 +129,9 @@ class EvaluatePrequential:
         self.periodic_scenario = periodic_scenario
         self.rolling_window_batches = rolling_window_batches
         if rolling_window_batches is not None:
-            self.rolling_metrics = [f"rolling_{w*self.batch_size}" for w in self.rolling_window_batches]
+            self.rolling_metrics = [
+                f"rolling_{w*self.batch_size}" for w in self.rolling_window_batches
+            ]
         else:
             self.rolling_metrics = []
         self._create_eval()
@@ -239,9 +243,13 @@ class EvaluatePrequential:
                 return river_metrics.CohenKappa()
         else:
             if metric == "kappa":
-                return river_utils.Rolling(river_metrics.CohenKappa(), window_size=rolling)
+                return river_utils.Rolling(
+                    river_metrics.CohenKappa(), window_size=rolling
+                )
             if metric == "accuracy":
-                return river_utils.Rolling(river_metrics.Accuracy(), window_size=rolling)
+                return river_utils.Rolling(
+                    river_metrics.Accuracy(), window_size=rolling
+                )
         # if metric == 'kappa_t':
         #     return CohenKappaTemporal()
 
@@ -281,7 +289,9 @@ class EvaluatePrequential:
             if self.drift_detected and model.drift:
                 self._eval[model_name]["alg"][iteration].add_new_column()
                 if model.cpnn or model.magic:
-                    self._perf[model_name]["memory"][iteration].append(self._eval[model_name]["alg"][iteration].get_size())
+                    self._perf[model_name]["memory"][iteration].append(
+                        self._eval[model_name]["alg"][iteration].get_size()
+                    )
             if model.cpnn:
                 y_hat = self._eval[model_name]["alg"][iteration].predict_one(
                     x_, timestamp=idx
@@ -478,7 +488,8 @@ class EvaluatePrequential:
                         self._eval[model_name]["alg"][iteration].add_new_column()
                         if m.cpnn or m.magic:
                             self._perf[model_name]["memory"][iteration].append(
-                                self._eval[model_name]["alg"][iteration].get_size())
+                                self._eval[model_name]["alg"][iteration].get_size()
+                            )
                 batch.append((x, y))
                 i += 1
 
@@ -694,11 +705,15 @@ class EvaluatePrequential:
             for model in self.anytime_learners:
                 model_name = model.name + "_anytime"
                 if model.cpnn or model.magic:
-                    self._perf[model_name]["memory"][iteration].append(self._eval[model_name]["alg"][iteration].get_size())
+                    self._perf[model_name]["memory"][iteration].append(
+                        self._eval[model_name]["alg"][iteration].get_size()
+                    )
             for model in self.batch_learners:
                 model_name = model.name + "_batch"
                 if model.cpnn or model.magic:
-                    self._perf[model_name]["memory"][iteration].append(self._eval[model_name]["alg"][iteration].get_size())
+                    self._perf[model_name]["memory"][iteration].append(
+                        self._eval[model_name]["alg"][iteration].get_size()
+                    )
             for idx, (x, y) in enumerate(stream):
                 if (idx + 1) % 100 == 0:
                     print(
@@ -818,9 +833,14 @@ class EvaluatePrequential:
             if self.anytime_scenario:
                 for m in self.anytime_learners:
                     if m.magic:
-                        self._eval[m.name + "_anytime"]["alg"][
+                        magic_model: MagicNet = self._eval[m.name + "_anytime"]["alg"][
                             iteration
-                        ].manager.store_masks_biases()
+                        ]
+                        magic_model.manager.store_masks_biases()
+                        if magic_model.manager.in_expansion:
+                            magic_model.manager.force_decision()
+                        magic_model.manager.grace_period = False
+                        magic_model.manager.in_expansion = False
                     self.checkpoint[m.name + "_anytime"][iteration].append(
                         pickle.loads(
                             pickle.dumps(
@@ -832,9 +852,14 @@ class EvaluatePrequential:
             if self.periodic_scenario:
                 for m in self.anytime_learners + self.batch_learners:
                     if m.magic and not self.anytime_scenario:
-                        self._eval[m.name + "_batch"]["alg"][
+                        magic_model: MagicNet = self._eval[m.name + "_batch"]["alg"][
                             iteration
-                        ].manager.store_masks_biases()
+                        ]
+                        magic_model.manager.store_masks_biases()
+                        if magic_model.manager.in_expansion:
+                            magic_model.manager.force_decision()
+                        magic_model.manager.grace_period = False
+                        magic_model.manager.in_expansion = False
                     self.checkpoint[m.name + "_batch"][iteration].append(
                         pickle.loads(
                             pickle.dumps(

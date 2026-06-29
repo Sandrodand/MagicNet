@@ -5,6 +5,8 @@ from evaluation.prequential_evaluation import EvaluatePrequential, make_dir
 import pandas as pd
 import sys
 import traceback
+from preprocessing.adaptive_standard_scaler import *
+from preprocessing.adaptive_minmax_scaler import *
 from evaluation.parameter_config import *
 from evaluation.default_parameters import *
 from models.cpnn.dynamic_cpnn import DynamicCPNN
@@ -15,12 +17,9 @@ from models.cpnn.dynamic_cpnn import DynamicCPNN
 MODE = "local"
 # 'local' or 'aws'. If 'aws', the messages will be written in a specific txt file in the output_file dir
 PATHS = [
-    (
-        f"datasets/weather_{c}conf"
-    )
-    for c in range(1,11)
+    f"datasets/weather_{c}conf" for c in range(1, 2)
 ]  # a list containing the paths of the data streams (without the extension)
-PATH_PERFORMANCE = "dynamic_sentinel"
+PATH_PERFORMANCE = "test_"
 # the path in which to save the results. In the case of a relative path, the performance folder is automatically
 # created
 PATH_BASE_LEARNER = ""
@@ -31,9 +30,9 @@ PATH_DETECTIONS = ""
 USE_DETECTOR = True
 # True if you want to use a detector, False if you want to use the supervised drift information (the "task" column in
 # csv file)
-DETECTOR_SIMULATOR_PRECISION = None
-DETECTOR_SIMULATOR_RECALL = None
-# Set both to None if you want to use the automatic drift detector with ADWIN
+DETECTOR_SIMULATOR_PRECISION = 1
+DETECTOR_SIMULATOR_RECALL = 1
+# Set both to None if you want to use the automatic drift detector with ADWIN (Sentinel)
 # Set both to a specific value if you want to simulate a drift detector with a specific recall and precision
 # This configuration works only when setting USE_DETECTOR = True
 DETECTOR_SIMULATOR_MIN_DELAY = 0
@@ -41,14 +40,15 @@ DETECTOR_SIMULATOR_MAX_DELAY = 1000
 # In the case of detector's simulation they represent the minimum and maximum number of data points following
 # a real drift after which to generate true positives.
 LOAD_DETECTIONS = False
-# Set to true if you want to load the detections of a previously run detector.
-SAVE_BASE_LEARNER = False
-# If True it saves in the base_learner folder the initialized base learner
-UPLOAD_BASE_LEARNER = False
+# Set to true if you want to load the detections of a previously run detector (if available)
+SAVE_BASE_LEARNER = True
+# If True it saves in the base_learner folder the initialized base learner. This is useful when you want to simulate
+# a new detector's configuration with the same model's initialization.
+UPLOAD_BASE_LEARNER = True
 # If True it uploads the base learner from the base_learner folder instead of initializing it random
 # This configuration can be used when you want to use an already initialized base learner. For instance, when you want
 # to compare performance with different detector's configurations and use the same base learner initialization.
-#TODO
+# TODO
 WRITE_CHECKPOINTS = True
 # True if you want to write the pickle files of the models after each supervised concept's end.
 BASE_RNN = "gru"
@@ -134,26 +134,44 @@ learners = [
         cpnn=False,
         magic=True,
     ),
-    LearnerConfig(
-        name="MAGIC_Net_no_rollback",
-        model=CFG.create_magic_net,
-        numeric=True,
-        batch_learner=False,
-        drift=True,
-        cpnn=False,
-        magic=True,
-    ),
-    LearnerConfig(
-        name="DyncPNN",
-        model=lambda: DynamicCPNN(
-            [CFG.base_learner.get_base_learner()],
-        ),
-        numeric=True,
-        batch_learner=False,
-        drift=True,
-        cpnn=True,
-        dyn_cpnn=True,
-    ),
+    # LearnerConfig(
+    #     name="MAGIC_Net_sh",
+    #     model=CFG.create_magic_net_single_head,
+    #     numeric=True,
+    #     batch_learner=False,
+    #     drift=True,
+    #     cpnn=False,
+    #     magic=True,
+    # ),
+    # LearnerConfig(
+    #     name="MAGIC_Net_binary_sh",
+    #     model=CFG.create_magic_net_binary,
+    #     numeric=True,
+    #     batch_learner=False,
+    #     drift=True,
+    #     cpnn=False,
+    #     magic=True,
+    # ),
+    # LearnerConfig(
+    #     name="MAGIC_Net_binary_mh",
+    #     model=CFG.create_magic_net_binary_mh,
+    #     numeric=True,
+    #     batch_learner=False,
+    #     drift=True,
+    #     cpnn=False,
+    #     magic=True,
+    # ),
+    # LearnerConfig(
+    #     name="DyncPNN",
+    #     model=lambda: DynamicCPNN(
+    #         [CFG.base_learner.get_base_learner()],
+    #     ),
+    #     numeric=True,
+    #     batch_learner=False,
+    #     drift=True,
+    #     cpnn=True,
+    #     dyn_cpnn=True,
+    # ),
 ]
 
 # __________________
@@ -203,16 +221,20 @@ if MODE == "aws":
 try:
     for path in PATHS:
         current_path_performance = os.path.join(PATH_PERFORMANCE, path.split("/")[-1])
-        if (
-            USE_DETECTOR
-            and DETECTOR_SIMULATOR_PRECISION is not None
-            and DETECTOR_SIMULATOR_RECALL is not None
-        ):
-            current_path_performance = (
-                f"{current_path_performance}"
-                f"_{int(DETECTOR_SIMULATOR_PRECISION*100)}prec"
-                f"_{int(DETECTOR_SIMULATOR_RECALL*100)}rec"
-            )
+        DETECTOR_TYPE = None
+        if USE_DETECTOR:
+            if (
+                DETECTOR_SIMULATOR_PRECISION is not None
+                and DETECTOR_SIMULATOR_RECALL is not None
+            ):
+                current_path_performance = (
+                    f"{current_path_performance}"
+                    f"_{int(DETECTOR_SIMULATOR_PRECISION*100)}prec"
+                    f"_{int(DETECTOR_SIMULATOR_RECALL*100)}rec"
+                )
+                DETECTOR_TYPE = "simulator"
+            else:
+                DETECTOR_TYPE = "sentinel"
         make_dir(current_path_performance)
 
         if DO_CL:
@@ -257,6 +279,17 @@ try:
             hidden_mult = int(0.5 * hidden_size)
         else:
             hidden_mult = HIDDEN_MULT
+        if DETECTOR_TYPE == "sentinel":
+            drift_delay = set_drift_delay(dataset)
+            save_column_freq = set_save_column_freq(dataset)
+        elif DETECTOR_TYPE == "simulator":
+            drift_delay = int(
+                DETECTOR_SIMULATOR_MAX_DELAY + 0.15 * DETECTOR_SIMULATOR_MAX_DELAY
+            )
+            save_column_freq = int(drift_delay / 2)
+        else:
+            drift_delay = None
+            save_column_freq = None
         old_labels_ta = min(seq_len - 1, MAX_OLD_LABELS)
         delta = set_adwin_delta(dataset)
 
@@ -276,6 +309,8 @@ try:
             hidden_mult=hidden_mult,
             ensemble_batches=ENSEMBLE_BATCHES,
             ensemble_th=ENSEMBLE_TH,
+            drift_delay=drift_delay,
+            save_column_freq=save_column_freq,
         )
         print(path)
         write = True
@@ -284,7 +319,10 @@ try:
                 with open(
                     os.path.join(PATH_BASE_LEARNER, f'{path.split("/")[-1]}.pkl'), "rb"
                 ) as f:
-                    base_learner = pickle.load(f)
+                    base_learner: cPNN = pickle.load(f)
+                base_learner.set_save_column_freq(
+                    save_column_freq=save_column_freq, drift_delay=drift_delay
+                )
                 CFG.base_learner.set_base_learner(base_learner)
                 write = False
                 print("Base learner loaded.")
@@ -318,11 +356,16 @@ try:
 
         if USE_DETECTOR:
             if LOAD_DETECTIONS:
-                with open(os.path.join(PATH_DETECTIONS, f"{dataset.replace('_train','')}{PREC_REC_SFX}", "drifts.pkl"), "rb") as f:
+                with open(
+                    os.path.join(
+                        PATH_DETECTIONS,
+                        f"{dataset.replace('_train','')}{PREC_REC_SFX}",
+                        "drifts.pkl",
+                    ),
+                    "rb",
+                ) as f:
                     detections = pickle.load(f)[0]
-                drift_detector = DetectorSimulator(
-                    detections=detections
-                )
+                drift_detector = DetectorSimulator(detections=detections)
                 print("Detections loaded:", detections)
             elif (
                 DETECTOR_SIMULATOR_PRECISION is None

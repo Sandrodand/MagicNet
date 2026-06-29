@@ -8,7 +8,14 @@ class DetectorSimulator:
     """
 
     def __init__(
-        self, detections=None, precision=None, recall=None, dataset=None, min_delay=0, max_delay=128 * 50, margin=None
+        self,
+        detections=None,
+        precision=None,
+        recall=None,
+        dataset=None,
+        min_delay=0,
+        max_delay=128 * 50,
+        margin=None,
     ):
         """
 

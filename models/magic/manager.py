@@ -28,7 +28,7 @@ class MagicManager(object):
         hidden_size=None,
         hidden_mult=None,
         ensemble_th=None,
-        cgru_weights=None,
+        base_learner_weights=None,
         cap_sigmoid=True,
         output_size=2,
         multi_head=True,
@@ -36,7 +36,8 @@ class MagicManager(object):
         expand_option=True,
         checkpoint_freq=None,
         drift_delay=None,
-        grace_period=None
+        grace_period=None,
+        previous_piggy=True,
     ):
         self.device = device
         self.model_class = model_class
@@ -54,9 +55,10 @@ class MagicManager(object):
         self.checkpoint_freq = checkpoint_freq
         self.checkpoints = []
         self.grace_period = grace_period
+        self.previous_piggy = previous_piggy
 
         self.threshold_fn = threshold_fn
-        self.drift_delay=drift_delay
+        self.drift_delay = drift_delay
 
         # Ensemble parameters
         self.ensemble = {}
@@ -73,8 +75,8 @@ class MagicManager(object):
 
         self.current_perf = {}
         self.in_expansion = False
-        self.piggymask_list = {} # Piggymasks of previous tasks
-        self.mask_list = {} # Masks used for freezing parameters
+        self.piggymask_list = {}  # Piggymasks of previous tasks
+        self.mask_list = {}  # Masks used for freezing parameters
         self.criterion = torch.nn.CrossEntropyLoss(reduction="mean")
         self.criterion.to(self.device)
         self.hidden_mult = hidden_mult
@@ -82,7 +84,6 @@ class MagicManager(object):
         self.initial_task_id = initial_task_id
         self.training_counter = 0
         self.last_pred = {}
-        self.previous_piggy = False
         self.previous_model_state = None
         self.forgotten_models = {}
         if grace_period is not None:
@@ -97,11 +98,11 @@ class MagicManager(object):
                 mask_init=mask_init,
                 threshold_fn=threshold_fn,
                 seq_len=seq_len,
-                cGRU_weights=cgru_weights,
+                cGRU_weights=base_learner_weights,
                 cap_sigmoid=self.cap_sigmoid,
                 output_size=self.output_size,
                 initial_task_id=initial_task_id,
-                multi_head=multi_head
+                multi_head=multi_head,
             )
             self.model.train()
 
@@ -120,9 +121,13 @@ class MagicManager(object):
         return torch.optim.Adam(model.parameters(), lr=self.lr)
 
     def store_masks_biases(self):
-        self.piggymask_list[self.curr_task_idx] = pickle.loads(pickle.dumps(self.model.get_piggymasks()))
+        self.piggymask_list[self.curr_task_idx] = pickle.loads(
+            pickle.dumps(self.model.get_piggymasks())
+        )
         if not self.multi_head:
-            self.biases[self.curr_task_idx] = pickle.loads(pickle.dumps(self.model.classifier[1].bias))
+            self.biases[self.curr_task_idx] = pickle.loads(
+                pickle.dumps(self.model.classifier[1].bias)
+            )
         else:
             self.biases[self.curr_task_idx] = None
         if self.in_expansion:
@@ -147,96 +152,109 @@ class MagicManager(object):
             return
 
         if self.in_grace_period:
-                self.ensemble_choices.append(
-                    {
-                        "training_counter": self.training_counter,
-                        "data_point_counter": self.data_point_counter,
-                        "choice": "grace_period",
-                        "current_perf": None,
-                        "chosen_model_size": None,
-                    }
-                )
-                self.ensemble_choices = sorted(
-                    self.ensemble_choices, key=lambda x: x["data_point_counter"]
-                )
-                print("MAGIC Net is in grace period")
-                return
+            self.ensemble_choices.append(
+                {
+                    "training_counter": self.training_counter,
+                    "data_point_counter": self.data_point_counter,
+                    "choice": "grace_period",
+                    "current_perf": None,
+                    "chosen_model_size": None,
+                }
+            )
+            self.ensemble_choices = sorted(
+                self.ensemble_choices, key=lambda x: x["data_point_counter"]
+            )
+            print("MAGIC Net is in grace period")
+            return
         self.ensemble_perf.append([])
 
         self.in_expansion = True
         self.ensemble_counter = 0
 
         # Store the model for the ignore option
-        current_model_copy = pickle.loads(pickle.dumps(self.model))
+        ignore_model = pickle.loads(pickle.dumps(self.model))
         if self.multi_head:
-            current_model_copy.add_task_head(task_id, previous=True)
-        current_freeze_mask = pickle.loads(pickle.dumps(self.mask_list[task_id - 1]))
+            ignore_model.add_task_head(task_id, previous=True)
+        ignore_masks = pickle.loads(pickle.dumps(self.mask_list[task_id - 1]))
 
         # Restore previous state
-        self.model = self.get_previous_state()
-        self.previous_model_state = pickle.loads(pickle.dumps(self.model))
+        backbone_model = self.get_previous_state()
+        self.previous_model_state = pickle.loads(pickle.dumps(backbone_model))
         self.curr_task_idx = task_id
 
         # Freeze the past
-        for mask in self.mask_list[task_id - 1].values():
+        freeze_all_masks = pickle.loads(pickle.dumps(self.mask_list[task_id - 1]))
+        for mask in freeze_all_masks.values():
             mask.fill_(1)
-        self.piggymask_list[task_id-1] = self.model.get_piggymasks()
+        self.piggymask_list[task_id - 1] = pickle.loads(
+            pickle.dumps(backbone_model.get_piggymasks())
+        )
         if not self.multi_head:
-            self.biases[task_id-1] = pickle.loads(pickle.dumps(self.model.classifier[1].bias))
+            self.biases[task_id - 1] = pickle.loads(
+                pickle.dumps(backbone_model.classifier[1].bias)
+            )
         else:
-            self.biases[task_id-1] = None
+            self.biases[task_id - 1] = None
         if self.multi_head:
-            self.model.add_task_head(task_id)
+            backbone_model.add_task_head(task_id)
 
         # Reinitialize piggymasks
-        self.model.reinit_piggymask(
-            self.mask_init, freeze_masks=pickle.loads(pickle.dumps(self.mask_list[task_id - 1]))
+        backbone_model.reinit_piggymask(
+            self.mask_init,
+            freeze_masks=freeze_all_masks,
         )
 
         # Create ensemble:
         # "PiggyMask" stays the same and we just train the piggymask
         # "Expand" expands the hidden size
 
-        self.ensemble["PiggyMask"] = pickle.loads(pickle.dumps(self.model))
+        self.ensemble["PiggyMask"] = pickle.loads(pickle.dumps(backbone_model))
         self.ensemble["PiggyMask"].reinit_linear_bias()
-        self.ensemble_masks["PiggyMask"] = pickle.loads(pickle.dumps(self.mask_list[task_id - 1]))
+        self.ensemble_masks["PiggyMask"] = pickle.loads(pickle.dumps(freeze_all_masks))
         self.current_perf["PiggyMask"] = metrics.CohenKappa()
         self.ensemble_optims["PiggyMask"] = self._create_optimizer(
             self.ensemble["PiggyMask"]
         )
 
         if self.expand_option:
-            self.ensemble["Expand"] = pickle.loads(pickle.dumps(self.model))
+            self.ensemble["Expand"] = pickle.loads(pickle.dumps(backbone_model))
             self.ensemble_masks["Expand"] = self.ensemble["Expand"].expand_hidden(
                 self.hidden_mult
             )
             self.current_perf["Expand"] = metrics.CohenKappa()
-            self.ensemble_optims["Expand"] = self._create_optimizer(self.ensemble["Expand"])
+            self.ensemble_optims["Expand"] = self._create_optimizer(
+                self.ensemble["Expand"]
+            )
 
         # From the third concept the ensemble is enlarged based on the mode chosen
 
         if self.previous_piggy:
-            self.ensemble["PiggyMask_last"] = pickle.loads(pickle.dumps(self.ensemble["PiggyMask"]))
+            self.ensemble["PiggyMask_last"] = pickle.loads(backbone_model)
             # Reinitialize piggymasks with the ones from the previous concept
+            self.ensemble_masks["PiggyMask_last"] = pickle.loads(
+                pickle.dumps(freeze_all_masks)
+            )
             self.ensemble["PiggyMask_last"].reinit_piggymask(
                 self.mask_init,
-                freeze_masks=pickle.loads(pickle.dumps(self.mask_list[task_id - 1])),
-                masks=pickle.loads(pickle.dumps(self.piggymask_list[task_id-1])),
+                freeze_masks=self.ensemble_masks["PiggyMask_last"],
+                masks=pickle.loads(pickle.dumps(self.piggymask_list[task_id - 1])),
             )
-            self.ensemble_masks["PiggyMask_last"] = pickle.loads(pickle.dumps(self.mask_list[task_id - 1]))
             self.current_perf["PiggyMask_last"] = metrics.CohenKappa()
             self.ensemble_optims["PiggyMask_last"] = self._create_optimizer(
                 self.ensemble["PiggyMask_last"]
             )
 
         if self.ignore_option:
-            self.ensemble["Ignore"] = current_model_copy
-            self.ensemble_masks["Ignore"] = current_freeze_mask
+            self.ensemble["Ignore"] = ignore_model
+            self.ensemble_masks["Ignore"] = ignore_masks
             self.current_perf["Ignore"] = metrics.CohenKappa()
-            self.ensemble_optims["Ignore"] = self._create_optimizer(self.ensemble["Ignore"])
+            self.ensemble_optims["Ignore"] = self._create_optimizer(
+                self.ensemble["Ignore"]
+            )
 
         for model in self.ensemble.values():
             model.to(self.device)
+
         self.last_pred = {}
 
     def get_previous_state(self):
@@ -244,7 +262,8 @@ class MagicManager(object):
             models = [
                 sc
                 for sc in self.checkpoints
-                if sc["data_point_counter"] <= self.data_point_counter - self.drift_delay
+                if sc["data_point_counter"]
+                <= self.data_point_counter - self.drift_delay
             ]
             if len(models) > 0:
                 self.checkpoints = []
@@ -268,7 +287,10 @@ class MagicManager(object):
         if self.expand_option:
             expand_options = ["Expand"]
             bestexpand = max(expand_options, key=lambda k: self.current_perf[k].get())
-            if self.current_perf[bestexpand].get() > self.ensemble_th * self.current_perf[bestpiggy].get():
+            if (
+                self.current_perf[bestexpand].get()
+                > self.ensemble_th * self.current_perf[bestpiggy].get()
+            ):
                 best_model = bestexpand
             else:
                 best_model = bestpiggy
@@ -280,12 +302,15 @@ class MagicManager(object):
             self.in_grace_period = True
             self.grace_period_counter = 0
         else:
-            self.forgotten_models[self.curr_task_idx-1] = pickle.loads(pickle.dumps(self.previous_model_state))
+            self.forgotten_models[self.curr_task_idx - 1] = pickle.loads(
+                pickle.dumps(self.previous_model_state)
+            )
 
         self.ensemble_choices.append(
             {
                 "training_counter": self.training_counter - self.ensemble_batches,
-                "data_point_counter": self.data_point_counter - self.ensemble_batches * self.batch_size,
+                "data_point_counter": self.data_point_counter
+                - self.ensemble_batches * self.batch_size,
                 "choice": best_model,
                 "final_perf": {
                     k: self.current_perf[k].get() for k in self.current_perf
@@ -293,11 +318,15 @@ class MagicManager(object):
                 "chosen_model_size": compute_model_size(self.ensemble[best_model]),
             }
         )
-        self.ensemble_choices = sorted(self.ensemble_choices, key=lambda x: x["data_point_counter"])
+        self.ensemble_choices = sorted(
+            self.ensemble_choices, key=lambda x: x["data_point_counter"]
+        )
         print("Magic Net choses: ", best_model)
         self.model = self.ensemble[best_model]
         self.model_optim = self.ensemble_optims[best_model]
-        self.mask_list[self.curr_task_idx] = self.ensemble_masks[best_model]
+        self.mask_list[self.curr_task_idx] = pickle.loads(
+            pickle.dumps(self.ensemble_masks[best_model])
+        )
         self.in_expansion = False
         self.save_checkpoint()
         self.ensemble = {}
@@ -369,11 +398,13 @@ class MagicManager(object):
 
     def save_checkpoint(self):
         if self.checkpoint_freq is not None:
-            self.checkpoints.append({
-                "data_point_counter": self.data_point_counter,
-                "training_counter": self.training_counter,
-                "model": pickle.loads(pickle.dumps(self.model))
-            })
+            self.checkpoints.append(
+                {
+                    "data_point_counter": self.data_point_counter,
+                    "training_counter": self.training_counter,
+                    "model": pickle.loads(pickle.dumps(self.model)),
+                }
+            )
             max_keep = int((self.drift_delay / self.checkpoint_freq) + 2)
             max_keep = max(4, max_keep)
             self.checkpoints = self.checkpoints[-max_keep:]

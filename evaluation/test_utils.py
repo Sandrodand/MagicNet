@@ -223,4 +223,3 @@ def create_drift_detector():
         return Sentinel(ADWIN(delta=DELTA, clock=1))
     else:
         return Sentinel(ADWIN(delta=DELTA, clock=1), training_data_points=50 * 128)
-

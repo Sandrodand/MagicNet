@@ -7,7 +7,7 @@ import pickle
 
 
 class InferenceMagicNet:
-    def __init__(self, model: MagicNet, ensemble_data_points=500, rolling_window = None):
+    def __init__(self, model: MagicNet, ensemble_data_points=500, rolling_window=None):
         """
         It implements a wrapper on a MAGIC Net model to perform inference when the task label is not known.
         It builds an ensemble that considers all the saved PiggyMasks of a given GIN model. On the i-th data point of the test
@@ -89,7 +89,9 @@ class InferenceMagicNet:
         y = int(y)
         if timestamp in self.predictions:
             for i in range(len(self.predictions[timestamp])):
-                self.metrics[i] = self.metrics[i].update(y, self.predictions[timestamp][i])
+                self.metrics[i] = self.metrics[i].update(
+                    y, self.predictions[timestamp][i]
+                )
             self.selected = np.argmax([m.get() for m in self.metrics])
             del self.predictions[timestamp]
         self.count += 1
@@ -105,7 +107,7 @@ class InferenceMagicNet:
         applica la maschera corrispondente una volta sola e lo congela.
         """
         models = []
-        model_copy =  pickle.loads(pickle.dumps(self.model))
+        model_copy = pickle.loads(pickle.dumps(self.model))
         if model_copy.manager.in_expansion:
             model_copy.manager.force_decision()
         model_copy.manager.in_grace_period = False
@@ -113,18 +115,31 @@ class InferenceMagicNet:
         for task_id in range(1, self.model.manager.curr_task_idx + 1):
             task_model = pickle.loads(pickle.dumps(model_copy))
             if task_id in task_model.manager.forgotten_models:
-                task_model.manager.model = pickle.loads(pickle.dumps(task_model.manager.forgotten_models[task_id]))
+                task_model.manager.model = pickle.loads(
+                    pickle.dumps(task_model.manager.forgotten_models[task_id])
+                )
                 task_model.manager.model.eval()
             else:
                 task_model.manager.model.eval()
                 if task_id in task_model.manager.piggymask_list:
-                    historical_mask = pickle.loads(pickle.dumps(task_model.manager.piggymask_list[task_id]))
-                    task_model.manager.model.reinit_piggymask(mask_init="random", masks=historical_mask)
-                if not task_model.manager.multi_head and task_id in task_model.manager.biases:
-                    historical_bias = pickle.loads(pickle.dumps(task_model.manager.biases[task_id]))
+                    historical_mask = pickle.loads(
+                        pickle.dumps(task_model.manager.piggymask_list[task_id])
+                    )
+                    task_model.manager.model.reinit_piggymask(
+                        mask_init="random", masks=historical_mask
+                    )
+                if (
+                    not task_model.manager.multi_head
+                    and task_id in task_model.manager.biases
+                ):
+                    historical_bias = pickle.loads(
+                        pickle.dumps(task_model.manager.biases[task_id])
+                    )
                     if historical_bias is not None:
                         # Lo ricolleghiamo forzatamente come parametro sul device corretto
-                        task_model.manager.model.classifier[1].bias = torch.nn.Parameter(
+                        task_model.manager.model.classifier[
+                            1
+                        ].bias = torch.nn.Parameter(
                             historical_bias.clone().to(task_model.manager.model.device)
                         )
             task_model.manager.curr_task_idx = task_id
@@ -141,9 +156,7 @@ class InferenceMagicNet:
                 for _ in range(len(self.models))
             ]
         else:
-            self.metrics = [
-                metrics.CohenKappa() for _ in range(len(self.models))
-            ]
+            self.metrics = [metrics.CohenKappa() for _ in range(len(self.models))]
         self.selected = len(self.models) - 1
         for m in self.models:
             self.ensemble_predictions[m.manager.curr_task_idx] = []

@@ -145,7 +145,7 @@ class cPNN:
     def set_initial_task(self, task):
         self.task_ids = [task]
 
-    def set_save_column_freq(self, save_column_freq: int):
+    def set_save_column_freq(self, save_column_freq: int, drift_delay: int):
         """
         It sets the frequency at which the model stores the column state (see the constructor fot details).
 
@@ -153,13 +153,15 @@ class cPNN:
         ----------
         save_column_freq: int.
             The frequency at which to store the columns.
+        drift_delay: int
+            The maximum drift delay to be considered.
 
         Returns
         -------
 
         """
-        print("SET SAV FREQ", save_column_freq)
         self.save_column_freq = save_column_freq
+        self.drift_delay = drift_delay
         if self.save_column_freq is None:
             self.saved_columns = []
 

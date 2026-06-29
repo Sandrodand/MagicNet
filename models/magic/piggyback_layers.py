@@ -260,10 +260,18 @@ class ElementWiseGRU(nn.Module):
                     res[m == 1] = mask_scale  # gli 1 diventano positivi
                     return res
 
-                self.mask_real_weight_ih = Parameter(invert_bin(masks["mask_real_weight_ih"]))
-                self.mask_real_weight_hh = Parameter(invert_bin(masks["mask_real_weight_hh"]))
-                self.mask_real_bias_ih_l0 = Parameter(invert_bin(masks["mask_real_bias_ih_l0"]))
-                self.mask_real_bias_hh_l0 = Parameter(invert_bin(masks["mask_real_bias_hh_l0"]))
+                self.mask_real_weight_ih = Parameter(
+                    invert_bin(masks["mask_real_weight_ih"])
+                )
+                self.mask_real_weight_hh = Parameter(
+                    invert_bin(masks["mask_real_weight_hh"])
+                )
+                self.mask_real_bias_ih_l0 = Parameter(
+                    invert_bin(masks["mask_real_bias_ih_l0"])
+                )
+                self.mask_real_bias_hh_l0 = Parameter(
+                    invert_bin(masks["mask_real_bias_hh_l0"])
+                )
             else:
                 self.mask_real_weight_ih = Parameter(
                     self.inverse_thresholder(masks["mask_real_weight_ih"])
@@ -326,10 +334,14 @@ class ElementWiseGRU(nn.Module):
             new_start = i * self.hidden_size
             new_end = new_start + old_hidden_size
 
-            temp_weight_ih[new_start:new_end, :].copy_(self.weight_ih[old_start:old_end, :])
+            temp_weight_ih[new_start:new_end, :].copy_(
+                self.weight_ih[old_start:old_end, :]
+            )
             freeze_masks["weight_ih"][new_start:new_end, :].fill_(1)
 
-            temp_weight_hh[new_start:new_end, :old_hidden_size].copy_(self.weight_hh[old_start:old_end, :])
+            temp_weight_hh[new_start:new_end, :old_hidden_size].copy_(
+                self.weight_hh[old_start:old_end, :]
+            )
             freeze_masks["weight_hh"][new_start:new_end, :old_hidden_size].fill_(1)
 
             temp_bias_ih_l0[new_start:new_end].copy_(self.bias_ih_l0[old_start:old_end])
@@ -351,10 +363,18 @@ class ElementWiseGRU(nn.Module):
     def adjust_piggymask(self, mask_scale, freeze_masks):
         old_hidden_size = self.mask_real_weight_ih.size(0) // 3
 
-        temp_mask_real_weight_ih = self.weight_ih.data.new(self.weight_ih.size()).fill_(mask_scale)
-        temp_mask_real_weight_hh = self.weight_hh.data.new(self.weight_hh.size()).fill_(mask_scale)
-        temp_mask_real_bias_ih_l0 = self.weight_ih.data.new(self.bias_ih_l0.size()).fill_(mask_scale)
-        temp_mask_real_bias_hh_l0 = self.weight_hh.data.new(self.bias_hh_l0.size()).fill_(mask_scale)
+        temp_mask_real_weight_ih = self.weight_ih.data.new(self.weight_ih.size()).fill_(
+            mask_scale
+        )
+        temp_mask_real_weight_hh = self.weight_hh.data.new(self.weight_hh.size()).fill_(
+            mask_scale
+        )
+        temp_mask_real_bias_ih_l0 = self.weight_ih.data.new(
+            self.bias_ih_l0.size()
+        ).fill_(mask_scale)
+        temp_mask_real_bias_hh_l0 = self.weight_hh.data.new(
+            self.bias_hh_l0.size()
+        ).fill_(mask_scale)
 
         # Trasloco a blocchi anche per le maschere continue!
         for i in range(3):
@@ -363,11 +383,18 @@ class ElementWiseGRU(nn.Module):
             new_start = i * self.hidden_size
             new_end = new_start + old_hidden_size
 
-            temp_mask_real_weight_ih[new_start:new_end, :].copy_(self.mask_real_weight_ih[old_start:old_end, :])
+            temp_mask_real_weight_ih[new_start:new_end, :].copy_(
+                self.mask_real_weight_ih[old_start:old_end, :]
+            )
             temp_mask_real_weight_hh[new_start:new_end, :old_hidden_size].copy_(
-                self.mask_real_weight_hh[old_start:old_end, :])
-            temp_mask_real_bias_ih_l0[new_start:new_end].copy_(self.mask_real_bias_ih_l0[old_start:old_end])
-            temp_mask_real_bias_hh_l0[new_start:new_end].copy_(self.mask_real_bias_hh_l0[old_start:old_end])
+                self.mask_real_weight_hh[old_start:old_end, :]
+            )
+            temp_mask_real_bias_ih_l0[new_start:new_end].copy_(
+                self.mask_real_bias_ih_l0[old_start:old_end]
+            )
+            temp_mask_real_bias_hh_l0[new_start:new_end].copy_(
+                self.mask_real_bias_hh_l0[old_start:old_end]
+            )
 
         self.mask_real_weight_ih = Parameter(temp_mask_real_weight_ih)
         self.mask_real_weight_hh = Parameter(temp_mask_real_weight_hh)
@@ -495,6 +522,7 @@ class ElementWiseLinear(nn.Module):
     def reinit_piggymask(self, mask_init, mask_scale, freeze_masks=None, masks=None):
         if masks is not None:
             if self.info["threshold_fn"] == "binarizer":
+
                 def invert_bin(m):
                     res = m.clone().fill_(-mask_scale)
                     res[m == 1] = mask_scale

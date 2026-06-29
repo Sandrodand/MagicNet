@@ -95,6 +95,28 @@ def set_delay(dataset):
     return 0
 
 
+def set_drift_delay(dataset):
+    dataset = dataset.lower()
+    if "air_quality" in dataset:
+        return 1200
+    if "energy" in dataset:
+        return 1200
+    if "weather" in dataset:
+        return 2500
+    return 1000
+
+
+def set_save_column_freq(dataset):
+    dataset = dataset.lower()
+    if "air_quality" in dataset:
+        return 500
+    if "energy" in dataset:
+        return 500
+    if "weather" in dataset:
+        return 750
+    return 1000
+
+
 def set_adwin_delta(dataset):
     dataset = dataset.lower()
     return 0.002

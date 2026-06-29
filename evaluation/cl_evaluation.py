@@ -33,6 +33,7 @@ class EvaluateContinualLearning:
         print_suffix="",
         mode="local",
         delay=0,
+        preprocessing_obj=None,
     ):
         """
 
@@ -62,6 +63,8 @@ class EvaluateContinualLearning:
             The number of timestamps of delay between the moment when the model receive feature vector X_t of
             the data point d_t and the moment when it receives the real label y_t. The original data stream contains
             both X_t and y_t in the same row. The class simulates the delay.
+        preprocessing_obj: object, default: None.
+            If not None it represents the  object containing the method reset and preprocess to preprocess input.
         """
         self.dataset = pd.read_csv(f"{path}.csv")
         self.dataset_name = path.split("/")[-1].replace("_test", "")
@@ -69,6 +72,9 @@ class EvaluateContinualLearning:
         self.checkpoint = checkpoint
         self.feature_names = list(self.dataset.columns)[:-2]
         self._iterations = len(self.checkpoint[list(self.checkpoint.keys())[0]])
+        self.preprocessing_obj = preprocessing_obj
+        if self.preprocessing_obj is not None:
+            self.preprocessing_obj.reset()
         self.delay = delay
         self.X = []
         self.Y = []
@@ -197,6 +203,8 @@ class EvaluateContinualLearning:
                 for metric_name in self.metric_names:
                     self.metric_tables[model_name][metric_name][iteration].append([])
                 for task_test in range(len(self.X)):
+                    if self.preprocessing_obj is not None:
+                        self.preprocessing_obj.reset()
                     self.predictions[model_name][iteration][task_train].append([])
                     update_inference = False
                     if model_dict.temp_dep:
@@ -226,8 +234,11 @@ class EvaluateContinualLearning:
                                 end=self.print_end,
                             )
                         count += 1
-                        if not model_dict.numeric:
-                            x = self._convert_to_dict(x)
+                        x = self._convert_to_dict(x)
+                        if model_dict.numeric:
+                            if self.preprocessing_obj is not None:
+                                x = self.preprocessing_obj.preprocess(x)
+                            x = list(x.values())
                         if model_dict.cpnn or model_dict.magic:
                             y_hat = model_task.predict_one(x, timestamp=idx)
                         else:

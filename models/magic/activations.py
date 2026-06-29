@@ -3,6 +3,7 @@ from torch import nn as nn, Tensor
 
 CAP_VALUE = 13.8
 
+
 class BinarizerFunction(torch.autograd.Function):
     @staticmethod
     def forward(ctx, inputs, threshold):

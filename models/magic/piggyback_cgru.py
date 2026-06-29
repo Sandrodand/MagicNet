@@ -29,7 +29,7 @@ class PiggyBackGRU(nn.Module):
         cGRU_weights=None,
         cap_sigmoid=True,
         multi_head=True,
-        initial_task_id=1
+        initial_task_id=1,
     ):
         super(PiggyBackGRU, self).__init__()
 
@@ -63,11 +63,24 @@ class PiggyBackGRU(nn.Module):
             GRU_weights = None
             linear_weights = None
 
-        gru_layer = nl.ElementWiseGRU(input_size=input_size, device=device, num_layers=num_layers, hidden_size=hidden_size,
-                              bias=bias, dropout=dropout, training=training, bidirectional=bidirectional,
-                              mask_init=mask_init, mask_scale=mask_scale, threshold_fn=threshold_fn,
-                              threshold=threshold, seq_len=self.seq_len, GRU_mask_weights=self.GRU_mask_weights,
-                              GRU_weights=GRU_weights, cap_sigmoid=cap_sigmoid)
+        gru_layer = nl.ElementWiseGRU(
+            input_size=input_size,
+            device=device,
+            num_layers=num_layers,
+            hidden_size=hidden_size,
+            bias=bias,
+            dropout=dropout,
+            training=training,
+            bidirectional=bidirectional,
+            mask_init=mask_init,
+            mask_scale=mask_scale,
+            threshold_fn=threshold_fn,
+            threshold=threshold,
+            seq_len=self.seq_len,
+            GRU_mask_weights=self.GRU_mask_weights,
+            GRU_weights=GRU_weights,
+            cap_sigmoid=cap_sigmoid,
+        )
 
         if not self.multi_head:
             self.classifier = nn.Sequential(
@@ -82,7 +95,7 @@ class PiggyBackGRU(nn.Module):
                     Linear_mask_weights=self.Linear_mask_weights,
                     linear_weights=linear_weights,
                     cap_sigmoid=cap_sigmoid,
-                )
+                ),
             )
         else:
             self.classifier = nn.Sequential(gru_layer)
@@ -107,7 +120,9 @@ class PiggyBackGRU(nn.Module):
     def add_task_head(self, task_id, previous=False):
         if self.multi_head and str(task_id) not in self.heads:
             if not previous:
-                self.heads[str(task_id)] = nn.Linear(self.hidden_size, self.output_size).to(self.device)
+                self.heads[str(task_id)] = nn.Linear(
+                    self.hidden_size, self.output_size
+                ).to(self.device)
             else:
                 last_head_key = list(self.heads.keys())[-1]
                 self.heads[str(task_id)] = copy.deepcopy(self.heads[last_head_key])
@@ -133,26 +148,34 @@ class PiggyBackGRU(nn.Module):
             new_tensor = torch.full(target_shape, -50.0, device=old_tensor.device)
 
             # Managing GRU layers (with 3 concatenated gates: Reset, Update, New)
-            if 'weight_ih' in name or 'weight_hh' in name or 'bias_ih' in name or 'bias_hh' in name:
+            if (
+                "weight_ih" in name
+                or "weight_hh" in name
+                or "bias_ih" in name
+                or "bias_hh" in name
+            ):
                 old_hidden = old_tensor.shape[0] // 3
                 new_hidden = target_shape[0] // 3
 
                 if len(target_shape) == 1:  # Maschere 1D o Bias
                     for i in range(3):
-                        new_tensor[i * new_hidden: i * new_hidden + old_hidden] = old_tensor[
-                                                                                  i * old_hidden: (i + 1) * old_hidden]
+                        new_tensor[
+                            i * new_hidden : i * new_hidden + old_hidden
+                        ] = old_tensor[i * old_hidden : (i + 1) * old_hidden]
                 elif len(target_shape) == 2:  # Maschere 2D (Weights)
                     old_in = old_tensor.shape[1]
                     for i in range(3):
-                        new_tensor[i * new_hidden: i * new_hidden + old_hidden, :old_in] = old_tensor[i * old_hidden: (
-                                                                                                                                  i + 1) * old_hidden,
-                                                                                           :]
+                        new_tensor[
+                            i * new_hidden : i * new_hidden + old_hidden, :old_in
+                        ] = old_tensor[i * old_hidden : (i + 1) * old_hidden, :]
             else:
                 # Layer standard non-GRU (es. teste lineari)
                 if len(target_shape) == 1:
-                    new_tensor[:old_tensor.shape[0]] = old_tensor
+                    new_tensor[: old_tensor.shape[0]] = old_tensor
                 elif len(target_shape) == 2:
-                    new_tensor[:old_tensor.shape[0], :old_tensor.shape[1]] = old_tensor
+                    new_tensor[
+                        : old_tensor.shape[0], : old_tensor.shape[1]
+                    ] = old_tensor
 
             padded_masks[name] = new_tensor
 
@@ -177,7 +200,9 @@ class PiggyBackGRU(nn.Module):
             freeze_masks.update(module.expand_hidden(multiplier))
         if self.multi_head:
             current_task_id = list(self.heads.keys())[-1]
-            self.heads[current_task_id] = nn.Linear(self.hidden_size, self.output_size).to(self.device)
+            self.heads[current_task_id] = nn.Linear(
+                self.hidden_size, self.output_size
+            ).to(self.device)
         self.classifier.to(self.device)
         return freeze_masks
 
@@ -190,18 +215,35 @@ class PiggyBackGRU(nn.Module):
     def get_piggymasks(self):
         piggymasks = {}
 
-        piggymasks["mask_real_weight_ih"] = self.classifier[0].threshold_fn(
-            self.classifier[0].mask_real_weight_ih
-        ).detach().clone()
-        piggymasks["mask_real_weight_hh"] = self.classifier[0].threshold_fn(
-            self.classifier[0].mask_real_weight_hh
-        ).detach().clone()
-        piggymasks["mask_real_bias_ih_l0"] = self.classifier[0].threshold_fn(
-            self.classifier[0].mask_real_bias_ih_l0
-        ).detach().clone()
-        piggymasks["mask_real_bias_hh_l0"] = self.classifier[0].threshold_fn(
-            self.classifier[0].mask_real_bias_hh_l0
-        ).detach().clone()
+        piggymasks["mask_real_weight_ih"] = (
+            self.classifier[0]
+            .threshold_fn(self.classifier[0].mask_real_weight_ih)
+            .detach()
+            .clone()
+        )
+        piggymasks["mask_real_weight_hh"] = (
+            self.classifier[0]
+            .threshold_fn(self.classifier[0].mask_real_weight_hh)
+            .detach()
+            .clone()
+        )
+        piggymasks["mask_real_bias_ih_l0"] = (
+            self.classifier[0]
+            .threshold_fn(self.classifier[0].mask_real_bias_ih_l0)
+            .detach()
+            .clone()
+        )
+        piggymasks["mask_real_bias_hh_l0"] = (
+            self.classifier[0]
+            .threshold_fn(self.classifier[0].mask_real_bias_hh_l0)
+            .detach()
+            .clone()
+        )
         if not self.multi_head:
-            piggymasks["mask_real_weight"] = self.classifier[1].threshold_fn(self.classifier[1].mask_real_weight).detach().clone()
+            piggymasks["mask_real_weight"] = (
+                self.classifier[1]
+                .threshold_fn(self.classifier[1].mask_real_weight)
+                .detach()
+                .clone()
+            )
         return piggymasks

@@ -28,7 +28,7 @@ class MagicNet:
         hidden_mult=50,
         ensemble_batches=50,
         ensemble_th=1.1,
-        cgru_weights=None,
+        base_learner_weights=None,
         cap_sigmoid=True,
         multi_head=True,
         ignore_option=True,
@@ -36,6 +36,7 @@ class MagicNet:
         checkpoint_freq=1500,
         drift_delay=3000,
         grace_period=5000,
+        previous_piggy=True,
         **kwargs,
     ):
         """
@@ -86,7 +87,7 @@ class MagicNet:
             This parameter defines how transfer learning is injected in the ensemble. "classic": no transfer learning;
             "last": the ensemble contains two extra options that use the previous piggymasks instead of randomly
             initialized ones.
-        cgru_weights: dict of tensors, default: None.
+        base_learner_weights: dict of tensors, default: None.
             Used to pass pre-initialized weights to the cRNN. If None they are initialized as usual
         cap_sigmoid: bool, default: True.
             True if you want to return 1 as sigmoid value for input exceeding the cap_value.
@@ -130,15 +131,29 @@ class MagicNet:
         self.grace_period = grace_period
         self.ignore_option = ignore_option
         self.expand_option = expand_option
+        self.previous_piggy = previous_piggy
 
         self.checkpoint_freq = checkpoint_freq
 
-        self.manager = MagicManager(ensemble_batches=ensemble_batches, input_size=input_size, threshold_fn=threshold_fn,
-                                    mask_init=mask_init, hidden_size=hidden_size, hidden_mult=hidden_mult,
-                                    ensemble_th=ensemble_th, cgru_weights=cgru_weights, cap_sigmoid=cap_sigmoid,
-                                    multi_head=self.multihead,
-                                    ignore_option=ignore_option, expand_option=expand_option, drift_delay=drift_delay,
-                                    grace_period=grace_period, checkpoint_freq=checkpoint_freq, **self.columns_args)
+        self.manager = MagicManager(
+            ensemble_batches=ensemble_batches,
+            input_size=input_size,
+            threshold_fn=threshold_fn,
+            mask_init=mask_init,
+            hidden_size=hidden_size,
+            hidden_mult=hidden_mult,
+            ensemble_th=ensemble_th,
+            base_learner_weights=base_learner_weights,
+            cap_sigmoid=cap_sigmoid,
+            multi_head=self.multihead,
+            ignore_option=ignore_option,
+            expand_option=expand_option,
+            drift_delay=drift_delay,
+            grace_period=grace_period,
+            checkpoint_freq=checkpoint_freq,
+            previous_piggy=previous_piggy,
+            **self.columns_args,
+        )
 
     def get_seq_len(self):
         return self.seq_len
@@ -348,7 +363,9 @@ class MagicNet:
             self.previous_data_points_anytime_hidden = previous_data_points
         return x
 
-    def predict_one(self, x: np.array, previous_data_points: np.array = None, task_id=None):
+    def predict_one(
+        self, x: np.array, previous_data_points: np.array = None, task_id=None
+    ):
         """
         It performs prediction on a single data point.
 
@@ -369,7 +386,9 @@ class MagicNet:
         if x is None:
             return None
         with torch.no_grad():
-            pred, _ = get_pred_from_outputs(self.manager.predict_one(x, task_id=task_id))
+            pred, _ = get_pred_from_outputs(
+                self.manager.predict_one(x, task_id=task_id)
+            )
             pred = int(pred[-1].detach().cpu().numpy())
         return pred
 
