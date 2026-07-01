@@ -17,20 +17,15 @@ from models.cpnn.dynamic_cpnn import DynamicCPNN
 MODE = "local"
 # 'local' or 'aws'. If 'aws', the messages will be written in a specific txt file in the output_file dir
 PATHS = [
-    f"datasets/weather_{c}conf" for c in range(1, 2)
+    f"datasets/weather_{c}conf" for c in range(1, 4)
 ]  # a list containing the paths of the data streams (without the extension)
-PATH_PERFORMANCE = "test_"
+PATH_PERFORMANCE = "test_final"
 # the path in which to save the results. In the case of a relative path, the performance folder is automatically
 # created
-PATH_BASE_LEARNER = ""
-# the path in which to save the base learner. In the case of a relative path, the base_learner folder is automatically
-# created
-PATH_DETECTIONS = ""
-# the path in which to load the detections if LOAD_DETECTIONS is set to True.
 USE_DETECTOR = True
 # True if you want to use a detector, False if you want to use the supervised drift information (the "task" column in
 # csv file)
-DETECTOR_SIMULATOR_PRECISION = 1
+DETECTOR_SIMULATOR_PRECISION = 0.75
 DETECTOR_SIMULATOR_RECALL = 1
 # Set both to None if you want to use the automatic drift detector with ADWIN (Sentinel)
 # Set both to a specific value if you want to simulate a drift detector with a specific recall and precision
@@ -41,16 +36,23 @@ DETECTOR_SIMULATOR_MAX_DELAY = 1000
 # a real drift after which to generate true positives.
 LOAD_DETECTIONS = False
 # Set to true if you want to load the detections of a previously run detector (if available)
+PATH_LOAD_DETECTIONS = None
+# the path from which to load the detections if LOAD_DETECTIONS is set to True.
+# Set it to None to use PATH_PERFORMANCE
+
 SAVE_BASE_LEARNER = True
 # If True it saves in the base_learner folder the initialized base learner. This is useful when you want to simulate
 # a new detector's configuration with the same model's initialization.
+PATH_BASE_LEARNER = ""
+# the path in which to save the base learner. In the case of a relative path, the base_learner folder is automatically
+# created
 UPLOAD_BASE_LEARNER = True
 # If True it uploads the base learner from the base_learner folder instead of initializing it random
 # This configuration can be used when you want to use an already initialized base learner. For instance, when you want
 # to compare performance with different detector's configurations and use the same base learner initialization.
-# TODO
-WRITE_CHECKPOINTS = True
+WRITE_CHECKPOINTS = False
 # True if you want to write the pickle files of the models after each supervised concept's end.
+
 BASE_RNN = "gru"
 # the base learner. it can be gru or lstm
 SEQ_LEN_PARAM = None
@@ -73,9 +75,7 @@ DELAY_PARAM = None
 # prediction)
 
 ###---MAGIC Net---
-MASK_INIT = "1s"
 ENSEMBLE_BATCHES = 30
-THRESHOLD_FN = "sigmoid"
 HIDDEN_MULT = None
 ENSEMBLE_TH = 1.05
 
@@ -109,14 +109,14 @@ learners = [
     #     cpnn=False,
     #     temp_dep=True,
     # ),
-    LearnerConfig(
-        name="cGRU",
-        model=CFG.base_learner.get_cpnn,
-        numeric=True,
-        batch_learner=False,
-        drift=False,
-        cpnn=True,
-    ),
+    # LearnerConfig(
+    #     name="cGRU",
+    #     model=CFG.base_learner.get_cpnn,
+    #     numeric=True,
+    #     batch_learner=False,
+    #     drift=False,
+    #     cpnn=True,
+    # ),
     # LearnerConfig(
     #     name="cPNN",
     #     model=CFG.base_learner.get_cpnn,
@@ -134,15 +134,15 @@ learners = [
         cpnn=False,
         magic=True,
     ),
-    # LearnerConfig(
-    #     name="MAGIC_Net_sh",
-    #     model=CFG.create_magic_net_single_head,
-    #     numeric=True,
-    #     batch_learner=False,
-    #     drift=True,
-    #     cpnn=False,
-    #     magic=True,
-    # ),
+    LearnerConfig(
+        name="MAGIC_Net_sh",
+        model=CFG.create_magic_net_single_head,
+        numeric=True,
+        batch_learner=False,
+        drift=True,
+        cpnn=False,
+        magic=True,
+    ),
     # LearnerConfig(
     #     name="MAGIC_Net_binary_sh",
     #     model=CFG.create_magic_net_binary,
@@ -152,15 +152,15 @@ learners = [
     #     cpnn=False,
     #     magic=True,
     # ),
-    # LearnerConfig(
-    #     name="MAGIC_Net_binary_mh",
-    #     model=CFG.create_magic_net_binary_mh,
-    #     numeric=True,
-    #     batch_learner=False,
-    #     drift=True,
-    #     cpnn=False,
-    #     magic=True,
-    # ),
+    LearnerConfig(
+        name="MAGIC_Net_binary_mh",
+        model=CFG.create_magic_net_binary_mh,
+        numeric=True,
+        batch_learner=False,
+        drift=True,
+        cpnn=False,
+        magic=True,
+    ),
     # LearnerConfig(
     #     name="DyncPNN",
     #     model=lambda: DynamicCPNN(
@@ -304,13 +304,11 @@ try:
             delta=delta,
             output_size=output_size,
             hidden_size=hidden_size,
-            threshold_fn=THRESHOLD_FN,
-            mask_init=MASK_INIT,
             hidden_mult=hidden_mult,
             ensemble_batches=ENSEMBLE_BATCHES,
             ensemble_th=ENSEMBLE_TH,
-            drift_delay=drift_delay,
             save_column_freq=save_column_freq,
+            drift_delay=drift_delay,
         )
         print(path)
         write = True
@@ -356,9 +354,11 @@ try:
 
         if USE_DETECTOR:
             if LOAD_DETECTIONS:
+                if PATH_LOAD_DETECTIONS is None or PATH_LOAD_DETECTIONS == "":
+                    PATH_LOAD_DETECTIONS = PATH_PERFORMANCE
                 with open(
                     os.path.join(
-                        PATH_DETECTIONS,
+                        PATH_LOAD_DETECTIONS,
                         f"{dataset.replace('_train','')}{PREC_REC_SFX}",
                         "drifts.pkl",
                     ),

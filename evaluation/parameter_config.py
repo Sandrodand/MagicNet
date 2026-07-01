@@ -58,7 +58,6 @@ class Config:
         output_size=2,
         hidden_size=None,
         threshold_fn=None,
-        mask_init=None,
         hidden_mult=None,
         ensemble_batches=None,
         ensemble_th=None,
@@ -91,8 +90,6 @@ class Config:
             self.hidden_size = hidden_size
         if threshold_fn is not None:
             self.threshold_fn = threshold_fn
-        if mask_init is not None:
-            self.mask_init = mask_init
         if hidden_mult is not None:
             self.hidden_mult = hidden_mult
         if ensemble_batches is not None:
@@ -211,12 +208,11 @@ class Config:
         return MagicNet(
             device="cpu",
             seq_len=self.seq_len,
-            mask_init=self.mask_init,
             input_size=self.num_features,
             train_verbose=False,
             initial_task_id=1,
             batch_size=self.batch_size,
-            threshold_fn=self.threshold_fn,
+            threshold_fn="sigmoid",
             hidden_size=self.hidden_size,
             hidden_mult=self.hidden_mult,
             ensemble_batches=self.ensemble_batches,
@@ -226,16 +222,15 @@ class Config:
             multi_head=True,
             ignore_option=True,
             expand_option=True,
-            output_size=self.output_size,
-            drift_delay=self.drift_delay,
             checkpoint_freq=self.save_column_freq,
+            drift_delay=self.drift_delay,
+            output_size=self.output_size,
         )
 
     def create_magic_net_binary(self):
         return MagicNet(
             device="cpu",
             seq_len=self.seq_len,
-            mask_init=self.mask_init,
             input_size=self.num_features,
             train_verbose=False,
             initial_task_id=1,
@@ -250,16 +245,15 @@ class Config:
             multi_head=False,
             ignore_option=True,
             expand_option=True,
-            output_size=self.output_size,
-            drift_delay=self.drift_delay,
             checkpoint_freq=self.save_column_freq,
+            drift_delay=self.drift_delay,
+            output_size=self.output_size,
         )
 
     def create_magic_net_binary_mh(self):
         return MagicNet(
             device="cpu",
             seq_len=self.seq_len,
-            mask_init=self.mask_init,
             input_size=self.num_features,
             train_verbose=False,
             initial_task_id=1,
@@ -274,21 +268,20 @@ class Config:
             multi_head=True,
             ignore_option=True,
             expand_option=True,
-            output_size=self.output_size,
-            drift_delay=self.drift_delay,
             checkpoint_freq=self.save_column_freq,
+            drift_delay=self.drift_delay,
+            output_size=self.output_size,
         )
 
     def create_magic_net_single_head(self):
         return MagicNet(
             device="cpu",
             seq_len=self.seq_len,
-            mask_init=self.mask_init,
             input_size=self.num_features,
             train_verbose=False,
             initial_task_id=1,
             batch_size=self.batch_size,
-            threshold_fn=self.threshold_fn,
+            threshold_fn="sigmoid",
             hidden_size=self.hidden_size,
             hidden_mult=self.hidden_mult,
             ensemble_batches=self.ensemble_batches,
@@ -298,9 +291,9 @@ class Config:
             multi_head=False,
             ignore_option=True,
             expand_option=True,
-            output_size=self.output_size,
-            drift_delay=self.drift_delay,
             checkpoint_freq=self.save_column_freq,
+            drift_delay=self.drift_delay,
+            output_size=self.output_size,
         )
 
     def callback_func_cl(self, **kwargs):

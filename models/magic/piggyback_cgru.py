@@ -20,8 +20,7 @@ class PiggyBackGRU(nn.Module):
         dropout=0.0,
         training=False,
         bidirectional=False,
-        mask_init="1s",
-        mask_scale=2e-2,
+        frozen_mask_param=2e-2,
         threshold_fn="sigmoid",
         threshold=None,
         seq_len=5,
@@ -41,12 +40,17 @@ class PiggyBackGRU(nn.Module):
         self.batch_size = batch_size
         self.device = torch.device(device)
         self.threshold_fn = threshold_fn
-        self.mask_scale = mask_scale
-        self.mask_init = mask_init
         self.seq_len = seq_len
         self.mask_weights = mask_weights
         self.cap_sigmoid = cap_sigmoid
         self.multi_head = multi_head
+
+        if frozen_mask_param is None:
+            if self.threshold_fn == "binarizer":
+                frozen_mask_param = 1e-2
+            else:
+                frozen_mask_param = 2e-2
+        self.frozen_mask_param = frozen_mask_param
 
         if mask_weights != []:
             self.GRU_mask_weights = mask_weights[0:4]
@@ -72,8 +76,7 @@ class PiggyBackGRU(nn.Module):
             dropout=dropout,
             training=training,
             bidirectional=bidirectional,
-            mask_init=mask_init,
-            mask_scale=mask_scale,
+            frozen_mask_param=frozen_mask_param,
             threshold_fn=threshold_fn,
             threshold=threshold,
             seq_len=self.seq_len,
@@ -88,8 +91,7 @@ class PiggyBackGRU(nn.Module):
                 nl.ElementWiseLinear(
                     in_features=hidden_size,
                     out_features=output_size,
-                    mask_init=mask_init,
-                    mask_scale=mask_scale,
+                    frozen_mask_param=frozen_mask_param,
                     threshold_fn=threshold_fn,
                     threshold=threshold,
                     Linear_mask_weights=self.Linear_mask_weights,
@@ -181,12 +183,14 @@ class PiggyBackGRU(nn.Module):
 
         return padded_masks
 
-    def reinit_piggymask(self, mask_init, freeze_masks=None, masks=None):
-        if masks is not None:
-            masks = self._pad_historical_masks(masks)
+    def reinit_piggymask(self, freeze_masks=None, mask_params=None):
+        if mask_params is not None:
+            mask_params = self._pad_historical_masks(mask_params)
         for module in self.classifier:
             module.reinit_piggymask(
-                mask_init, self.mask_scale, freeze_masks=freeze_masks, masks=masks
+                self.frozen_mask_param,
+                freeze_masks=freeze_masks,
+                mask_params=mask_params,
             )
 
     def reinit_linear_bias(self):
@@ -212,38 +216,57 @@ class PiggyBackGRU(nn.Module):
             freeze_mask.update(module.create_freezemask())
         return freeze_mask
 
-    def get_piggymasks(self):
+    def get_piggymasks(self, threshold=True):
         piggymasks = {}
 
-        piggymasks["mask_real_weight_ih"] = (
-            self.classifier[0]
-            .threshold_fn(self.classifier[0].mask_real_weight_ih)
-            .detach()
-            .clone()
-        )
-        piggymasks["mask_real_weight_hh"] = (
-            self.classifier[0]
-            .threshold_fn(self.classifier[0].mask_real_weight_hh)
-            .detach()
-            .clone()
-        )
-        piggymasks["mask_real_bias_ih_l0"] = (
-            self.classifier[0]
-            .threshold_fn(self.classifier[0].mask_real_bias_ih_l0)
-            .detach()
-            .clone()
-        )
-        piggymasks["mask_real_bias_hh_l0"] = (
-            self.classifier[0]
-            .threshold_fn(self.classifier[0].mask_real_bias_hh_l0)
-            .detach()
-            .clone()
-        )
-        if not self.multi_head:
-            piggymasks["mask_real_weight"] = (
-                self.classifier[1]
-                .threshold_fn(self.classifier[1].mask_real_weight)
+        if threshold:
+            piggymasks["mask_real_weight_ih"] = (
+                self.classifier[0]
+                .threshold_fn(self.classifier[0].mask_real_weight_ih)
                 .detach()
                 .clone()
             )
+            piggymasks["mask_real_weight_hh"] = (
+                self.classifier[0]
+                .threshold_fn(self.classifier[0].mask_real_weight_hh)
+                .detach()
+                .clone()
+            )
+            piggymasks["mask_real_bias_ih_l0"] = (
+                self.classifier[0]
+                .threshold_fn(self.classifier[0].mask_real_bias_ih_l0)
+                .detach()
+                .clone()
+            )
+            piggymasks["mask_real_bias_hh_l0"] = (
+                self.classifier[0]
+                .threshold_fn(self.classifier[0].mask_real_bias_hh_l0)
+                .detach()
+                .clone()
+            )
+            if not self.multi_head:
+                piggymasks["mask_real_weight"] = (
+                    self.classifier[1]
+                    .threshold_fn(self.classifier[1].mask_real_weight)
+                    .detach()
+                    .clone()
+                )
+        else:
+            piggymasks["mask_real_weight_ih"] = (
+                self.classifier[0].mask_real_weight_ih.detach().clone()
+            )
+            piggymasks["mask_real_weight_hh"] = (
+                self.classifier[0].mask_real_weight_hh.detach().clone()
+            )
+            piggymasks["mask_real_bias_ih_l0"] = (
+                self.classifier[0].mask_real_bias_ih_l0.detach().clone()
+            )
+            piggymasks["mask_real_bias_hh_l0"] = (
+                self.classifier[0].mask_real_bias_hh_l0.detach().clone()
+            )
+            if not self.multi_head:
+                piggymasks["mask_real_weight"] = (
+                    self.classifier[1].mask_real_weight.detach().clone()
+                )
+
         return piggymasks

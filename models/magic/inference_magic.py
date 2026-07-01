@@ -126,7 +126,7 @@ class InferenceMagicNet:
                         pickle.dumps(task_model.manager.piggymask_list[task_id])
                     )
                     task_model.manager.model.reinit_piggymask(
-                        mask_init="random", masks=historical_mask
+                        mask_params=historical_mask
                     )
                 if (
                     not task_model.manager.multi_head

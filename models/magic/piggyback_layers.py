@@ -130,8 +130,7 @@ class ElementWiseGRU(nn.Module):
         training=False,
         bidirectional=False,
         batch_first=True,
-        mask_init="1s",
-        mask_scale=2e-2,
+        frozen_mask_param=2e-2,
         threshold_fn="sigmoid",
         threshold=5e-3,
         seq_len=10,
@@ -153,8 +152,7 @@ class ElementWiseGRU(nn.Module):
         self.training = training
         self.bidirectional = bidirectional
         self.batch_first = batch_first
-        self.mask_init = mask_init
-        self.mask_scale = mask_scale
+        self.frozen_mask_param = frozen_mask_param
         self.threshold_fn = threshold_fn
         self.threshold = threshold
         self.seq_len = (seq_len,)
@@ -166,13 +164,6 @@ class ElementWiseGRU(nn.Module):
             self.inverse_thresholder = inverseSigmoid
 
         self.h0 = np.zeros((1, self.hidden_size))
-
-        if threshold is None:
-            threshold = DEFAULT_THRESHOLD
-        self.info = {
-            "threshold_fn": threshold_fn,
-            "threshold": threshold,
-        }
 
         if GRU_weights is not None:
             self.weight_ih = Parameter(GRU_weights.weight_ih_l0)
@@ -202,8 +193,12 @@ class ElementWiseGRU(nn.Module):
                 )
             )
 
+        if threshold is None:
+            threshold = DEFAULT_THRESHOLD
+        self.threshold = threshold
+        self.threshold_fn_name = threshold_fn
         if threshold_fn == "binarizer":
-            self.threshold_fn = Binarizer()
+            self.threshold_fn = Binarizer(threshold=threshold)
         elif threshold_fn == "ternarizer":
             self.threshold_fn = Ternarizer()
         else:
@@ -211,11 +206,11 @@ class ElementWiseGRU(nn.Module):
                 function=threshold_fn, cap_sigmoid=self.cap_sigmoid
             )
             if not self.cap_sigmoid:
-                self.mask_scale = 1
+                self.frozen_mask_param = 1
             else:
-                self.mask_scale = CAP_VALUE
+                self.frozen_mask_param = CAP_VALUE
 
-        self.initialize_piggymask(mask_init, self.mask_scale)
+        self.initialize_piggymask(self.frozen_mask_param)
 
     def forward(self, input):
         self.hn = self._build_initial_state(input, self.h0)
@@ -251,42 +246,42 @@ class ElementWiseGRU(nn.Module):
 
         return out
 
-    def reinit_piggymask(self, mask_init, mask_scale, freeze_masks=None, masks=None):
-        if masks is not None:
-            if self.info["threshold_fn"] == "binarizer":
+    def reinit_piggymask(self, mask_param_init, freeze_masks=None, mask_params=None):
+        if mask_params is not None:
+            if self.threshold_fn_name == "binarizer":
                 # Funzione per invertire la maschera binaria (0/1) in pesi latenti
                 def invert_bin(m):
-                    res = m.clone().fill_(-mask_scale)  # i 0 diventano negativi
-                    res[m == 1] = mask_scale  # gli 1 diventano positivi
+                    res = m.clone().fill_(-mask_param_init)  # i 0 diventano negativi
+                    res[m == 1] = mask_param_init  # gli 1 diventano positivi
                     return res
 
                 self.mask_real_weight_ih = Parameter(
-                    invert_bin(masks["mask_real_weight_ih"])
+                    invert_bin(mask_params["mask_real_weight_ih"])
                 )
                 self.mask_real_weight_hh = Parameter(
-                    invert_bin(masks["mask_real_weight_hh"])
+                    invert_bin(mask_params["mask_real_weight_hh"])
                 )
                 self.mask_real_bias_ih_l0 = Parameter(
-                    invert_bin(masks["mask_real_bias_ih_l0"])
+                    invert_bin(mask_params["mask_real_bias_ih_l0"])
                 )
                 self.mask_real_bias_hh_l0 = Parameter(
-                    invert_bin(masks["mask_real_bias_hh_l0"])
+                    invert_bin(mask_params["mask_real_bias_hh_l0"])
                 )
             else:
                 self.mask_real_weight_ih = Parameter(
-                    self.inverse_thresholder(masks["mask_real_weight_ih"])
+                    self.inverse_thresholder(mask_params["mask_real_weight_ih"])
                 )
                 self.mask_real_weight_hh = Parameter(
-                    self.inverse_thresholder(masks["mask_real_weight_hh"])
+                    self.inverse_thresholder(mask_params["mask_real_weight_hh"])
                 )
                 self.mask_real_bias_ih_l0 = Parameter(
-                    self.inverse_thresholder(masks["mask_real_bias_ih_l0"])
+                    self.inverse_thresholder(mask_params["mask_real_bias_ih_l0"])
                 )
                 self.mask_real_bias_hh_l0 = Parameter(
-                    self.inverse_thresholder(masks["mask_real_bias_hh_l0"])
+                    self.inverse_thresholder(mask_params["mask_real_bias_hh_l0"])
                 )
         else:
-            self.initialize_piggymask(mask_init, mask_scale, freeze_masks=freeze_masks)
+            self.initialize_piggymask(mask_param_init, freeze_masks=freeze_masks)
 
     def create_freezemask(self):
         """
@@ -356,25 +351,25 @@ class ElementWiseGRU(nn.Module):
         self.bias_hh_l0 = Parameter(temp_bias_hh_l0)
 
         self.h0 = np.zeros((1, self.hidden_size))
-        self.adjust_piggymask(mask_scale=self.mask_scale, freeze_masks=freeze_masks)
+        self.adjust_piggymask(mask_param_init=self.frozen_mask_param)
 
         return freeze_masks
 
-    def adjust_piggymask(self, mask_scale, freeze_masks):
+    def adjust_piggymask(self, mask_param_init):
         old_hidden_size = self.mask_real_weight_ih.size(0) // 3
 
         temp_mask_real_weight_ih = self.weight_ih.data.new(self.weight_ih.size()).fill_(
-            mask_scale
+            mask_param_init
         )
         temp_mask_real_weight_hh = self.weight_hh.data.new(self.weight_hh.size()).fill_(
-            mask_scale
+            mask_param_init
         )
         temp_mask_real_bias_ih_l0 = self.weight_ih.data.new(
             self.bias_ih_l0.size()
-        ).fill_(mask_scale)
+        ).fill_(mask_param_init)
         temp_mask_real_bias_hh_l0 = self.weight_hh.data.new(
             self.bias_hh_l0.size()
-        ).fill_(mask_scale)
+        ).fill_(mask_param_init)
 
         # Trasloco a blocchi anche per le maschere continue!
         for i in range(3):
@@ -401,43 +396,37 @@ class ElementWiseGRU(nn.Module):
         self.mask_real_bias_ih_l0 = Parameter(temp_mask_real_bias_ih_l0)
         self.mask_real_bias_hh_l0 = Parameter(temp_mask_real_bias_hh_l0)
 
-    def initialize_piggymask(self, mask_init, mask_scale, freeze_masks=None):
+    def initialize_piggymask(self, mask_param_init, freeze_masks=None):
         temp_mask_real_weight_ih = self.weight_ih.data.new(self.weight_ih.size())
         temp_mask_real_weight_hh = self.weight_hh.data.new(self.weight_hh.size())
         temp_mask_real_bias_ih_l0 = self.weight_ih.data.new(self.bias_ih_l0.size())
         temp_mask_real_bias_hh_l0 = self.weight_hh.data.new(self.bias_hh_l0.size())
 
-        if mask_init == "1s":
-            temp_mask_real_weight_ih.fill_(mask_scale)
-            temp_mask_real_weight_hh.fill_(mask_scale)
-            temp_mask_real_bias_ih_l0.fill_(mask_scale)
-            temp_mask_real_bias_hh_l0.fill_(mask_scale)
-        elif mask_init == "uniform":
-            temp_mask_real_weight_ih.uniform_(-1 * mask_scale, mask_scale)
-            temp_mask_real_weight_hh.uniform_(-1 * mask_scale, mask_scale)
-            temp_mask_real_bias_ih_l0.uniform_(-1 * mask_scale, mask_scale)
-            temp_mask_real_bias_hh_l0.uniform_(-1 * mask_scale, mask_scale)
+        temp_mask_real_weight_ih.fill_(mask_param_init)
+        temp_mask_real_weight_hh.fill_(mask_param_init)
+        temp_mask_real_bias_ih_l0.fill_(mask_param_init)
+        temp_mask_real_bias_hh_l0.fill_(mask_param_init)
 
-        if freeze_masks is not None:
+        if freeze_masks is not None and self.threshold_fn_name == "sigmoid":
             temp_mask_real_weight_ih[
                 freeze_masks["weight_ih"].eq(1)
             ] = temp_mask_real_weight_ih[freeze_masks["weight_ih"].eq(1)].uniform_(
-                -1 * mask_scale, mask_scale
+                -1 * mask_param_init, mask_param_init
             )
             temp_mask_real_weight_hh[
                 freeze_masks["weight_hh"].eq(1)
             ] = temp_mask_real_weight_hh[freeze_masks["weight_hh"].eq(1)].uniform_(
-                -1 * mask_scale, mask_scale
+                -1 * mask_param_init, mask_param_init
             )
             temp_mask_real_bias_ih_l0[
                 freeze_masks["bias_ih_l0"].eq(1)
             ] = temp_mask_real_bias_ih_l0[freeze_masks["bias_ih_l0"].eq(1)].uniform_(
-                -1 * mask_scale, mask_scale
+                -1 * mask_param_init, mask_param_init
             )
             temp_mask_real_bias_hh_l0[
                 freeze_masks["bias_hh_l0"].eq(1)
             ] = temp_mask_real_bias_hh_l0[freeze_masks["bias_hh_l0"].eq(1)].uniform_(
-                -1 * mask_scale, mask_scale
+                -1 * mask_param_init, mask_param_init
             )
 
         self.mask_real_weight_ih = Parameter(temp_mask_real_weight_ih)
@@ -459,8 +448,7 @@ class ElementWiseLinear(nn.Module):
         in_features,
         out_features,
         bias=True,
-        mask_init="1s",
-        mask_scale=2e-2,
+        frozen_mask_param=2e-2,
         threshold_fn="sigmoid",
         threshold=5e-3,
         Linear_mask_weights=[],
@@ -471,20 +459,13 @@ class ElementWiseLinear(nn.Module):
 
         self.in_features = in_features
         self.out_features = out_features
-        self.mask_scale = mask_scale
-        self.mask_init = mask_init
+        self.frozen_mask_param = frozen_mask_param
         self.Linear_mask_weights = Linear_mask_weights
         self.cap_sigmoid = cap_sigmoid
         if self.cap_sigmoid:
             self.inverse_thresholder = inverseCappedSigmoid
         else:
             self.inverse_thresholder = inverseSigmoid
-        if threshold is None:
-            threshold = DEFAULT_THRESHOLD
-        self.info = {
-            "threshold_fn": threshold_fn,
-            "threshold": threshold,
-        }
 
         if linear_weights is not None:
             self.weight = Parameter(linear_weights.weight)
@@ -505,8 +486,12 @@ class ElementWiseLinear(nn.Module):
                 self.register_parameter("bias", None)
 
         # Initialize the thresholder.
+        if threshold is None:
+            threshold = DEFAULT_THRESHOLD
+        self.threshold = threshold
+        self.threshold_fn_name = threshold_fn
         if threshold_fn == "binarizer":
-            self.threshold_fn = Binarizer()
+            self.threshold_fn = Binarizer(threshold)
         elif threshold_fn == "ternarizer":
             self.threshold_fn = Ternarizer()
         else:
@@ -514,27 +499,29 @@ class ElementWiseLinear(nn.Module):
                 function=threshold_fn, cap_sigmoid=self.cap_sigmoid
             )
             if self.cap_sigmoid:
-                self.mask_scale = CAP_VALUE
+                self.frozen_mask_param = CAP_VALUE
             else:
-                self.mask_scale = 1
-        self.initialize_piggymask(mask_init, self.mask_scale, Linear_mask_weights)
+                self.frozen_mask_param = 1
+        self.initialize_piggymask(self.frozen_mask_param, Linear_mask_weights)
 
-    def reinit_piggymask(self, mask_init, mask_scale, freeze_masks=None, masks=None):
-        if masks is not None:
-            if self.info["threshold_fn"] == "binarizer":
+    def reinit_piggymask(self, mask_param_init, freeze_masks=None, mask_params=None):
+        if mask_params is not None:
+            if self.threshold_fn_name == "binarizer":
 
                 def invert_bin(m):
-                    res = m.clone().fill_(-mask_scale)
-                    res[m == 1] = mask_scale
+                    res = m.clone().fill_(-mask_param_init)
+                    res[m == 1] = mask_param_init
                     return res
 
-                self.mask_real_weight = Parameter(invert_bin(masks["mask_real_weight"]))
+                self.mask_real_weight = Parameter(
+                    invert_bin(mask_params["mask_real_weight"])
+                )
             else:
                 self.mask_real_weight = Parameter(
-                    self.inverse_thresholder(masks["mask_real_weight"])
+                    self.inverse_thresholder(mask_params["mask_real_weight"])
                 )
         else:
-            self.initialize_piggymask(mask_init, mask_scale, freeze_mask=freeze_masks)
+            self.initialize_piggymask(mask_param_init, freeze_mask=freeze_masks)
 
     def reinit_linear_bias(self):
         if self.bias is not None:
@@ -552,18 +539,15 @@ class ElementWiseLinear(nn.Module):
         return freeze_masks
 
     def initialize_piggymask(
-        self, mask_init, mask_scale, Linear_mask_weights=[], freeze_mask=None
+        self, mask_param_init, Linear_mask_weights=[], freeze_mask=None
     ):
         temp_mask_real_weight = self.weight.data.new(self.weight.size())
-        if mask_init == "1s":
-            temp_mask_real_weight.fill_(mask_scale)
-        elif mask_init == "uniform":
-            temp_mask_real_weight.uniform_(-1 * mask_scale, mask_scale)
+        temp_mask_real_weight.fill_(mask_param_init)
 
-        if freeze_mask is not None:
+        if freeze_mask is not None and self.threshold_fn_name == "sigmoid":
             temp_mask_real_weight[freeze_mask["weight"].eq(1)] = temp_mask_real_weight[
                 freeze_mask["weight"].eq(1)
-            ].uniform_(-1 * mask_scale, mask_scale)
+            ].uniform_(-1 * mask_param_init, mask_param_init)
 
         if Linear_mask_weights != []:
             self.mask_real_weight = Parameter(Linear_mask_weights)
@@ -588,13 +572,13 @@ class ElementWiseLinear(nn.Module):
             )
         else:
             self.register_parameter("bias", None)
-        self.adjust_piggymask(self.mask_scale, freeze_masks=freeze_mask)
+        self.adjust_piggymask(self.frozen_mask_param)
         return freeze_mask
 
-    def adjust_piggymask(self, mask_scale, freeze_masks):
+    def adjust_piggymask(self, mask_param_init):
         temp_mask_real_weight = self.weight.data.new(self.weight.size())
 
-        temp_mask_real_weight.fill_(mask_scale)
+        temp_mask_real_weight.fill_(mask_param_init)
 
         temp_mask_real_weight[
             : self.mask_real_weight.size(0), : self.mask_real_weight.size(1)

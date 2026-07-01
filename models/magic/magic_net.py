@@ -16,7 +16,6 @@ class MagicNet:
         lr: float = 0.01,
         seq_len: int = 5,
         stride: int = 1,
-        mask_init="1s",
         input_size=4,
         train_epochs: int = 10,
         train_verbose: bool = False,
@@ -36,7 +35,6 @@ class MagicNet:
         checkpoint_freq=1500,
         drift_delay=3000,
         grace_period=5000,
-        previous_piggy=True,
         **kwargs,
     ):
         """
@@ -53,9 +51,6 @@ class MagicNet:
             The length of the sliding window that builds the single sequences.
         stride: int, default: 1.
             The length of the sliding window's stride.
-        mask_init: str, default: "1s".
-            This parameter defines how new weights for the Piggymasks are initialized. "1s" initializes all weights to 1.
-            "uniform" initializes them with a Uniform probability distribution between -2e-2 and 2e-2.
         train_epochs: int, default: 10.
             The training epochs to perform in learn_many method.
         train_verbose: bool, default:False.
@@ -110,7 +105,6 @@ class MagicNet:
         self.columns_args["seq_len"] = seq_len
         self.columns_args["model_class"] = model_class
         self.columns_args["initial_task_id"] = initial_task_id
-        self.mask_init = mask_init
         self.ensemble_batches = ensemble_batches
         self.ensemble_th = ensemble_th
 
@@ -131,7 +125,6 @@ class MagicNet:
         self.grace_period = grace_period
         self.ignore_option = ignore_option
         self.expand_option = expand_option
-        self.previous_piggy = previous_piggy
 
         self.checkpoint_freq = checkpoint_freq
 
@@ -139,7 +132,6 @@ class MagicNet:
             ensemble_batches=ensemble_batches,
             input_size=input_size,
             threshold_fn=threshold_fn,
-            mask_init=mask_init,
             hidden_size=hidden_size,
             hidden_mult=hidden_mult,
             ensemble_th=ensemble_th,
@@ -148,10 +140,9 @@ class MagicNet:
             multi_head=self.multihead,
             ignore_option=ignore_option,
             expand_option=expand_option,
+            checkpoint_freq=checkpoint_freq,
             drift_delay=drift_delay,
             grace_period=grace_period,
-            checkpoint_freq=checkpoint_freq,
-            previous_piggy=previous_piggy,
             **self.columns_args,
         )
 
@@ -257,8 +248,7 @@ class MagicNet:
             self.learn_many(np.array(self.x_batch), np.array(self.y_batch))
             self.x_batch = []
             self.y_batch = []
-        else:
-            self.manager.update_counter(self.data_point_counter)
+        self.manager.update_counter(self.data_point_counter)
         return None
 
     def add_new_column(self, task_id=None):
@@ -319,7 +309,7 @@ class MagicNet:
         x, y, _ = self._load_batch(x, y)
         y = y[self.seq_len - 1 :]
 
-        perf_train = self.manager.train(x, y, counter=self.data_point_counter)
+        perf_train = self.manager.train(x, y)
 
         return perf_train
 

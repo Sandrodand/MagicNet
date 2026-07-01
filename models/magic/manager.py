@@ -24,7 +24,6 @@ class MagicManager(object):
         train_verbose: bool = False,
         threshold_fn="sigmoid",
         initial_task_id=1,
-        mask_init="1s",
         hidden_size=None,
         hidden_mult=None,
         ensemble_th=None,
@@ -37,11 +36,9 @@ class MagicManager(object):
         checkpoint_freq=None,
         drift_delay=None,
         grace_period=None,
-        previous_piggy=True,
     ):
         self.device = device
         self.model_class = model_class
-        self.mask_init = mask_init
         self.input_size = input_size
         self.lr = lr
         self.seq_len = seq_len
@@ -55,7 +52,8 @@ class MagicManager(object):
         self.checkpoint_freq = checkpoint_freq
         self.checkpoints = []
         self.grace_period = grace_period
-        self.previous_piggy = previous_piggy
+        self.previous_piggy = False
+        # Consider PiggyMask_last only after the first PiggyMask choice
 
         self.threshold_fn = threshold_fn
         self.drift_delay = drift_delay
@@ -86,28 +84,31 @@ class MagicManager(object):
         self.last_pred = {}
         self.previous_model_state = None
         self.forgotten_models = {}
+        self.only_ignore = False
         if grace_period is not None:
             self.in_grace_period = True
             self.grace_period_counter = 0
+
+        # TODO
+        self.debug = []
 
         if model_class == PiggyBackGRU:
             self.model = PiggyBackGRU(
                 input_size=self.input_size,
                 device=self.device,
                 hidden_size=hidden_size,
-                mask_init=mask_init,
+                output_size=self.output_size,
                 threshold_fn=threshold_fn,
                 seq_len=seq_len,
                 cGRU_weights=base_learner_weights,
                 cap_sigmoid=self.cap_sigmoid,
-                output_size=self.output_size,
-                initial_task_id=initial_task_id,
                 multi_head=multi_head,
+                initial_task_id=initial_task_id,
             )
             self.model.train()
 
         if initial_task_id == 1:
-            # Freeze the piggymasks for the first task since we are learning all of the weights
+            # Freeze the piggymasks for the first task since we are learning all the weights
             for name, param in self.model.named_parameters():
                 if name.__contains__("mask"):
                     param.requires_grad = False
@@ -179,6 +180,7 @@ class MagicManager(object):
 
         # Restore previous state
         backbone_model = self.get_previous_state()
+        self.checkpoints = []
         self.previous_model_state = pickle.loads(pickle.dumps(backbone_model))
         self.curr_task_idx = task_id
 
@@ -198,9 +200,9 @@ class MagicManager(object):
         if self.multi_head:
             backbone_model.add_task_head(task_id)
 
+        backbone_piggy_last = pickle.loads(pickle.dumps(backbone_model))
         # Reinitialize piggymasks
         backbone_model.reinit_piggymask(
-            self.mask_init,
             freeze_masks=freeze_all_masks,
         )
 
@@ -229,15 +231,10 @@ class MagicManager(object):
         # From the third concept the ensemble is enlarged based on the mode chosen
 
         if self.previous_piggy:
-            self.ensemble["PiggyMask_last"] = pickle.loads(backbone_model)
+            self.ensemble["PiggyMask_last"] = backbone_piggy_last
             # Reinitialize piggymasks with the ones from the previous concept
             self.ensemble_masks["PiggyMask_last"] = pickle.loads(
                 pickle.dumps(freeze_all_masks)
-            )
-            self.ensemble["PiggyMask_last"].reinit_piggymask(
-                self.mask_init,
-                freeze_masks=self.ensemble_masks["PiggyMask_last"],
-                masks=pickle.loads(pickle.dumps(self.piggymask_list[task_id - 1])),
             )
             self.current_perf["PiggyMask_last"] = metrics.CohenKappa()
             self.ensemble_optims["PiggyMask_last"] = self._create_optimizer(
@@ -267,7 +264,7 @@ class MagicManager(object):
             ]
             if len(models) > 0:
                 self.checkpoints = []
-                return models[-1]["model"]
+                return pickle.loads(pickle.dumps(models[-1]["model"]))
         return pickle.loads(pickle.dumps(self.model))
 
     def force_decision(self):
@@ -328,7 +325,8 @@ class MagicManager(object):
             pickle.dumps(self.ensemble_masks[best_model])
         )
         self.in_expansion = False
-        self.save_checkpoint()
+        if self.checkpoint_freq is not None:
+            self.save_checkpoint()
         self.ensemble = {}
         self.ensemble_masks = {}
         self.ensemble_optims = {}
@@ -344,10 +342,12 @@ class MagicManager(object):
 
     def update_counter(self, counter):
         self.data_point_counter = counter
+        if self.checkpoint_freq is not None and not self.in_expansion:
+            if self.data_point_counter % self.checkpoint_freq == 0:
+                self.save_checkpoint()
         self.manage_grace_period()
 
-    def train(self, x, y, counter=None):
-        self.data_point_counter = counter
+    def train(self, x, y):
         self.manage_grace_period()
         perf_train = {
             "accuracy": [],
@@ -391,9 +391,6 @@ class MagicManager(object):
             if self.ensemble_counter == self.ensemble_batches:
                 self._decide_best_model()
         self.training_counter += 1
-        if self.checkpoint_freq is not None and not self.in_expansion:
-            if self.data_point_counter % self.checkpoint_freq == 0:
-                self.save_checkpoint()
         return perf_train
 
     def save_checkpoint(self):
