@@ -14,12 +14,12 @@ from models.cpnn.dynamic_cpnn import DynamicCPNN
 # __________________
 # PARAMETERS
 # __________________
-MODE = "local"
+MODE = "aws"
 # 'local' or 'aws'. If 'aws', the messages will be written in a specific txt file in the output_file dir
 PATHS = [
-    f"datasets/weather_{c}conf" for c in range(1, 4)
+    f"datasets/air_quality_{c}conf" for c in range(1, 4)
 ]  # a list containing the paths of the data streams (without the extension)
-PATH_PERFORMANCE = "test_final"
+PATH_PERFORMANCE = ""
 # the path in which to save the results. In the case of a relative path, the performance folder is automatically
 # created
 USE_DETECTOR = True
@@ -109,14 +109,14 @@ learners = [
     #     cpnn=False,
     #     temp_dep=True,
     # ),
-    # LearnerConfig(
-    #     name="cGRU",
-    #     model=CFG.base_learner.get_cpnn,
-    #     numeric=True,
-    #     batch_learner=False,
-    #     drift=False,
-    #     cpnn=True,
-    # ),
+    LearnerConfig(
+        name="cGRU",
+        model=CFG.base_learner.get_cpnn,
+        numeric=True,
+        batch_learner=False,
+        drift=False,
+        cpnn=True,
+    ),
     # LearnerConfig(
     #     name="cPNN",
     #     model=CFG.base_learner.get_cpnn,
@@ -143,15 +143,15 @@ learners = [
         cpnn=False,
         magic=True,
     ),
-    # LearnerConfig(
-    #     name="MAGIC_Net_binary_sh",
-    #     model=CFG.create_magic_net_binary,
-    #     numeric=True,
-    #     batch_learner=False,
-    #     drift=True,
-    #     cpnn=False,
-    #     magic=True,
-    # ),
+    LearnerConfig(
+        name="MAGIC_Net_binary_sh",
+        model=CFG.create_magic_net_binary,
+        numeric=True,
+        batch_learner=False,
+        drift=True,
+        cpnn=False,
+        magic=True,
+    ),
     LearnerConfig(
         name="MAGIC_Net_binary_mh",
         model=CFG.create_magic_net_binary_mh,
@@ -161,17 +161,17 @@ learners = [
         cpnn=False,
         magic=True,
     ),
-    # LearnerConfig(
-    #     name="DyncPNN",
-    #     model=lambda: DynamicCPNN(
-    #         [CFG.base_learner.get_base_learner()],
-    #     ),
-    #     numeric=True,
-    #     batch_learner=False,
-    #     drift=True,
-    #     cpnn=True,
-    #     dyn_cpnn=True,
-    # ),
+    LearnerConfig(
+        name="DyncPNN",
+        model=lambda: DynamicCPNN(
+            [CFG.base_learner.get_base_learner()],
+        ),
+        numeric=True,
+        batch_learner=False,
+        drift=True,
+        cpnn=True,
+        dyn_cpnn=True,
+    ),
 ]
 
 # __________________
