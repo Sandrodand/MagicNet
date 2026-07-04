@@ -17,7 +17,7 @@ from models.cpnn.dynamic_cpnn import DynamicCPNN
 MODE = "aws"
 # 'local' or 'aws'. If 'aws', the messages will be written in a specific txt file in the output_file dir
 PATHS = [
-    f"datasets/{d}_{c}conf" for d in ['air_quality','energy','weather'] for c in range(1, 21)
+    f"datasets/air_quality_{c}conf" for c in range(1, 21)
 ]  # a list containing the paths of the data streams (without the extension)
 PATH_PERFORMANCE = ""
 # the path in which to save the results. In the case of a relative path, the performance folder is automatically
@@ -25,7 +25,7 @@ PATH_PERFORMANCE = ""
 USE_DETECTOR = True
 # True if you want to use a detector, False if you want to use the supervised drift information (the "task" column in
 # csv file)
-DETECTOR_SIMULATOR_PRECISION = 0.75
+DETECTOR_SIMULATOR_PRECISION = 0.5
 DETECTOR_SIMULATOR_RECALL = 1
 # Set both to None if you want to use the automatic drift detector with ADWIN (Sentinel)
 # Set both to a specific value if you want to simulate a drift detector with a specific recall and precision
