@@ -5,6 +5,13 @@ from torch.nn.parameter import Parameter
 
 
 class cGRUFromMasks(nn.Module):
+    """
+    A continuous GRU model reconstructed from previously saved weights, masks, and biases.
+
+    This class instantiates a static GRU where parameters are strictly defined by
+    the product of base weights and specific masks, ensuring no further gradient updates
+    occur on these reconstructed parameters.
+    """
     def __init__(
         self,
         weights,
@@ -12,6 +19,20 @@ class cGRUFromMasks(nn.Module):
         masks,
         device="cpu",
     ):
+        """
+        Initializes the reconstructed GRU and uploads the masked parameters.
+
+        Parameters
+        ----------
+        weights : dict
+            Dictionary containing the base weights (e.g., 'weight_ih', 'weight_hh').
+        bias : torch.Tensor
+            The bias vector for the linear output layer.
+        masks : dict
+            Dictionary containing the masks corresponding to the base weights.
+        device : str, default: "cpu"
+            The device to load the tensors on.
+        """
         super(cGRUFromMasks, self).__init__()
 
         # PARAMETERS
@@ -34,6 +55,19 @@ class cGRUFromMasks(nn.Module):
         self.upload_weights(weights, masks, bias)
 
     def upload_weights(self, weights, masks, bias):
+        """
+        Applies masks to the provided weights and assigns them as non-learnable
+        parameters to the internal GRU and Linear layers.
+
+        Parameters
+        ----------
+        weights : dict
+            Dictionary of base weights.
+        masks : dict
+            Dictionary of masks corresponding to the weights.
+        bias : torch.Tensor
+            Bias tensor for the linear output layer.
+        """
         for name, weight in weights.items():
             temp = weight * masks[name]
             if name == "weight":
@@ -46,6 +80,19 @@ class cGRUFromMasks(nn.Module):
         self.linear.bias = Parameter(bias, requires_grad=False)
 
     def forward(self, x):
+        """
+        Performs a forward pass through the reconstructed GRU.
+
+        Parameters
+        ----------
+        x : torch.Tensor
+            Input sequence tensor.
+
+        Returns
+        -------
+        torch.Tensor
+            The output predictions from the final time step.
+        """
         input_f = x.to(self.device)
 
         out_h, _ = self.gru(input_f, self._build_initial_state(x))

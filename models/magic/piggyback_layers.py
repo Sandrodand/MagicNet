@@ -37,6 +37,30 @@ def GRUBlockMath(
     bidirectional=False,
     batch_first=False,
 ):
+    """
+    Executes the low-level mathematical operations of a GRU cell using the provided
+    (and potentially masked) weights and biases.
+
+    Parameters
+    ----------
+    input : torch.Tensor
+        Input features.
+    hn : torch.Tensor
+        Initial hidden state.
+    weight_thresholded_ih : torch.Tensor
+        Masked input-hidden weights.
+    weight_thresholded_hh : torch.Tensor
+        Masked hidden-hidden weights.
+    bias_ih_l0 : torch.Tensor
+        Masked input-hidden biases.
+    bias_hh_l0 : torch.Tensor
+        Masked hidden-hidden biases.
+
+    Returns
+    -------
+    tuple
+        A tuple containing the output tensor and the new hidden state.
+    """
     # print(weight_thresholded_ih)
     tensors = [weight_thresholded_ih, weight_thresholded_hh, bias_ih_l0, bias_hh_l0]
     # print(tensors)
@@ -115,7 +139,11 @@ def LSTMBlockMath(
 
 
 class ElementWiseGRU(nn.Module):
-    """Modified GRU layer."""
+    """
+    A modified GRU layer that maintains learnable masks alongside its standard weights.
+    The effective weights used during the forward pass are computed as the element-wise
+    product of the frozen base weights and the thresholded masks.
+    """
 
     def __init__(
         self,

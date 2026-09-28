@@ -5,8 +5,27 @@ CAP_VALUE = 13.8
 
 
 class BinarizerFunction(torch.autograd.Function):
+    """
+    Custom autograd function for binarizing a tensor using a straight-through estimator
+    for the backward pass.
+    """
     @staticmethod
     def forward(ctx, inputs, threshold):
+        """
+        Applies a binarization threshold.
+
+        Parameters
+        ----------
+        inputs : torch.Tensor
+            The input tensor to binarize.
+        threshold : float
+            The threshold value. Values >= threshold become 1.0, otherwise 0.0.
+
+        Returns
+        -------
+        torch.Tensor
+            Binarized output tensor.
+        """
         # Straight-through estimator: genera 1 se > threshold, altrimenti 0
         outputs = torch.zeros_like(inputs)
         outputs[inputs >= threshold] = 1.0
@@ -29,8 +48,28 @@ class Binarizer(nn.Module):
 
 
 class TernarizerFunction(torch.autograd.Function):
+    """
+    Custom autograd function for ternarizing a tensor using a straight-through estimator
+    for the backward pass.
+    """
     @staticmethod
     def forward(ctx, inputs, threshold):
+        """
+        Applies a ternarization threshold.
+
+        Parameters
+        ----------
+        inputs : torch.Tensor
+            The input tensor to ternarize.
+        threshold : float
+            The threshold value. Values > threshold become 1.0, values < -threshold
+            become -1.0, and values in between become 0.0.
+
+        Returns
+        -------
+        torch.Tensor
+            Ternarized output tensor.
+        """
         outputs = inputs.clone()
         outputs.fill_(0)
         outputs[inputs < -threshold] = -1
@@ -59,8 +98,11 @@ def linear(input):
 
 
 class Thresholder(nn.Module):
-    """Ternarizes {-1, 0, 1} a real-valued tensor."""
+    """
+    Applies a thresholding or activation function to a real-valued tensor.
 
+    Supported functions include 'linear', 'sigmoid', 'relu', 'tanh', and 'ternarizer'.
+    """
     def __init__(self, function="ternarizer", cap_sigmoid=True):
         super(Thresholder, self).__init__()
         self.threshold = 5e-3
@@ -81,7 +123,19 @@ class Thresholder(nn.Module):
 
 
 class CappedSigmoid(nn.Module):
+    """
+        Applies a capped sigmoid activation function.
+
+        The function behaves like a standard sigmoid but returns 1.0 for inputs
+        greater than or equal to a specified cap_value.
+    """
     def __init__(self, cap_value=CAP_VALUE):
+        """
+        Parameters
+        ----------
+        cap_value : float, default: CAP_VALUE (13.8)
+            The threshold above which the activation output is capped at 1.0.
+        """
         super(CappedSigmoid, self).__init__()
         self.cap_value = float(cap_value)
 

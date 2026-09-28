@@ -8,6 +8,10 @@ from models.magic.activations import CappedSigmoid
 
 
 class PiggyBackGRU(nn.Module):
+    """
+    A continuous GRU model that supports continuous differentiable masking (Piggyback)
+    for selective reuse of frozen weights and dynamic structural expansion.
+    """
     def __init__(
         self,
         input_size=4,
@@ -30,6 +34,48 @@ class PiggyBackGRU(nn.Module):
         multi_head=True,
         initial_task_id=1,
     ):
+        """
+        Parameters
+        ----------
+        input_size : int, default: 4
+            Dimensionality of input features.
+        device : torch.device, default: "cpu"
+            Computation device.
+        num_layers : int, default: 1
+            Number of GRU layers.
+        hidden_size : int, default: 50
+            Number of hidden units in the GRU.
+        output_size : int, default: 2
+            Number of output classes.
+        batch_size : int, default: 128
+            Training mini-batch size.
+        bias : bool, default: True
+            Whether to use bias weights in the GRU.
+        dropout : float, default: 0.0
+            Dropout probability.
+        training : bool, default: False
+            Sets the training state.
+        bidirectional : bool, default: False
+            If True, uses a bidirectional GRU.
+        frozen_mask_param : float, default: 2e-2
+            Initialization parameter for the underlying mask values.
+        threshold_fn : str, default: "sigmoid"
+            Function used to threshold real-valued masks.
+        threshold : float, default: None
+            Specific threshold cutoff value (if using binarization).
+        seq_len : int, default: 5
+            Length of the temporal sequence.
+        mask_weights : list, default: []
+            Pre-initialized mask weights to load.
+        cGRU_weights : object, default: None
+            Pre-initialized GRU weights to load.
+        cap_sigmoid : bool, default: True
+            If True, caps the sigmoid mask activation to 1 at extreme values.
+        multi_head : bool, default: True
+            If True, instantiates a separate output head for each task.
+        initial_task_id : int, default: 1
+            The identifier for the initial concept.
+        """
         super(PiggyBackGRU, self).__init__()
 
         # PARAMETERS
@@ -108,6 +154,22 @@ class PiggyBackGRU(nn.Module):
         self.classifier.to(self.device)
 
     def forward(self, input, task_id=None):
+        """
+        Performs a forward pass applying the current masks to the frozen weights.
+
+        Parameters
+        ----------
+        input : torch.Tensor
+            Input feature tensor.
+        task_id : int, optional
+            The specific task ID to select the corresponding classification head
+            (if multi_head is True). Defaults to the latest task.
+
+        Returns
+        -------
+        torch.Tensor
+            The output predictions.
+        """
         if not self.multi_head:
             out = self.classifier(input)
         else:
@@ -197,11 +259,26 @@ class PiggyBackGRU(nn.Module):
         if not self.multi_head:
             self.classifier[1].reinit_linear_bias()
 
-    def expand_hidden(self, multiplier):
-        self.hidden_size = round(self.hidden_size + multiplier)
+    def expand_hidden(self, neurons_to_add):
+        """
+        Expands the hidden state capacity of the GRU layer by allocating new neurons, 
+        while retaining and freezing previously learned weights.
+
+        Parameters
+        ----------
+        neurons_to_add : int
+            The number of new hidden units to add to the layer.
+
+        Returns
+        -------
+        dict
+            A dictionary containing freeze masks (set to 1) for the newly added weights, 
+            allowing them to be trained while preserving older weights.
+        """
+        self.hidden_size = round(self.hidden_size + neurons_to_add)
         freeze_masks = {}
         for module in self.classifier:
-            freeze_masks.update(module.expand_hidden(multiplier))
+            freeze_masks.update(module.expand_hidden(neurons_to_add))
         if self.multi_head:
             current_task_id = list(self.heads.keys())[-1]
             self.heads[current_task_id] = nn.Linear(

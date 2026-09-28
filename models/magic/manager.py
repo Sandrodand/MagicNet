@@ -9,7 +9,10 @@ from models.utils_scl.utils import *
 
 
 class MagicManager(object):
-    """Handles training and pruning."""
+    """
+    Handles the lifecycle, training, masking, ensemble evaluation, and structural
+    adaptation of the MAGIC Net architecture.
+    """
 
     def __init__(
         self,
@@ -37,6 +40,58 @@ class MagicManager(object):
         drift_delay=None,
         grace_period=None,
     ):
+        """
+        Parameters
+        ----------
+        model_class : class, default: PiggyBackGRU
+            The network architecture class to instantiate.
+        device : str, default: None
+            The processing device ('cpu' or 'cuda').
+        ensemble_batches : int, default: 30
+            The number of batches to wait before choosing the best model from the ensemble
+            after a drift detection.
+        lr : float, default: 0.01
+            Learning rate for the optimizer.
+        input_size : int, default: 4
+            Dimensionality of the input features.
+        batch_size : int, default: 128
+            Number of samples per mini-batch.
+        seq_len : int, default: 5
+            Length of the sequence sliding window.
+        train_epochs : int, default: 10
+            Number of training epochs per mini-batch.
+        train_verbose : bool, default: False
+            If True, prints epoch-level training metrics.
+        threshold_fn : str, default: "sigmoid"
+            The masking threshold function (e.g., "sigmoid", "binarizer").
+        initial_task_id : int, default: 1
+            Identifier for the first task/concept.
+        hidden_size : int, default: None
+            Number of hidden units in the recurrent layer.
+        hidden_mult : int, default: None
+            Number of units to add during architectural expansion (accommodation).
+        ensemble_th : float, default: None
+            Performance threshold multiplier; expansion is chosen if its performance
+            is greater than mask-only performance multiplied by this factor.
+        base_learner_weights : dict, default: None
+            Pre-initialized weights to inject into the base learner.
+        cap_sigmoid : bool, default: True
+            Whether to cap the upper limit of the sigmoid function.
+        output_size : int, default: 2
+            Number of output classes.
+        multi_head : bool, default: True
+            Whether to use an independent linear head for each new concept.
+        ignore_option : bool, default: True
+            Whether to include an 'Ignore' candidate in the ensemble for false alarm robustness.
+        expand_option : bool, default: True
+            Whether to include an 'Expand' candidate in the ensemble for structural accommodation.
+        checkpoint_freq : int, default: None
+            Frequency (in data points) to save model checkpoints.
+        drift_delay : int, default: None
+            Maximum expected delay of the drift detector, used for checkpoint retrieval.
+        grace_period : int, default: None
+            Number of data points to ignore new drift alarms after an adaptation.
+        """
         self.device = device
         self.model_class = model_class
         self.input_size = input_size
@@ -89,9 +144,6 @@ class MagicManager(object):
             self.in_grace_period = True
             self.grace_period_counter = 0
 
-        # TODO
-        self.debug = []
-
         if model_class == PiggyBackGRU:
             self.model = PiggyBackGRU(
                 input_size=self.input_size,
@@ -135,6 +187,17 @@ class MagicManager(object):
             self._decide_best_model()
 
     def add_new_column(self, task_id):
+        """
+        Triggers the drift adaptation mechanism (ensemble phase).
+
+        It freezes current weights, stores the past configuration, and spawns
+        ensemble candidates (Mask, Expand, Ignore) to handle the new concept.
+
+        Parameters
+        ----------
+        task_id : int
+            The identifier for the new concept/task.
+        """
         # Freeze past by setting freeze masks to 1s
         if self.in_expansion:
             self.ensemble_choices.append(
@@ -348,6 +411,24 @@ class MagicManager(object):
         self.manage_grace_period()
 
     def train(self, x, y):
+        """
+        Executes a training step on a given mini-batch. If the model is in expansion mode,
+        it trains the entire ensemble in parallel.
+
+        Parameters
+        ----------
+        x : torch.Tensor
+            Batch input features tensor.
+        y : torch.Tensor
+            Batch target labels tensor.
+
+        Returns
+        -------
+        dict
+            Dictionary containing historical training metrics across epochs
+            (accuracy, loss, kappa).
+
+        """
         self.manage_grace_period()
         perf_train = {
             "accuracy": [],
