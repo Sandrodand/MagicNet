@@ -1,10 +1,6 @@
 # MAGIC Net
 This repository contains the code used for the experimentation shown in the paper.
 
-Paper: Federico Giannini, Sandro D'andrea, Emanuele Della Valle: **Don't Look Back in Anger: MAGIC Net for Streaming Continual Learning with Temporal Dependence**. IEEE Big Data 2025: 1396-1403
-- [Post proceeding version](https://ieeexplore.ieee.org/document/11401614)
-- [Preprint version](https://arxiv.org/abs/2603.08600)
-
 ## 1) Installation
 execute:
 
@@ -34,10 +30,10 @@ Each file's name has the following structure: **\<data_source\>\_\<id_configurat
 * test: The data stream contains the data points of the test sets for the CL evaluation. Each concept (task column) is represented by 2k data points.
 
 #### models
-- models/cpnn: It contains the python modules implementing cPNN and DYNcPNN.
-- models/crnn: It contains the python modules implementing cLSTM and cGRU. 
-- models/magic: It contains the python modules implementing MAGIC Net.
-* **`models/magic/`**: It contains the Python modules implementing MAGIC Net.
+- `models/cpnn/`: It contains the python modules implementing cPNN and DYNcPNN.
+- `models/crnn/`: It contains the python modules implementing cLSTM and cGRU. 
+- `models/magic/`: It contains the python modules implementing MAGIC Net.
+- **`models/magic/`**: It contains the Python modules implementing MAGIC Net.
   * **`models/magic/magic_net.py`**: The `MagicNet` class implements MAGIC Net's architecture.
   * **`models/magic/manager.py`**: The `MagicManager` class implements the manager of MAGIC Net's masks and models.
   * **`models/magic/piggyback_cgru.py`**: The `PiggyBackGRU` class implements the GRU model with masks.
@@ -46,7 +42,7 @@ Each file's name has the following structure: **\<data_source\>\_\<id_configurat
   * **`models/magic/cgru_from_masks.py`**: The `cGRUFromMasks` class reconstructs a static, standard GRU model by applying the learned masks to the frozen base weights.
   * **`models/magic/inference_magic.py`**: The `InferenceMagicNet` class implements a wrapper to perform continual inference by dynamically evaluating the ensemble of historical masks.
   * **`models/magic/inference_magic_fix.py`**: An updated version of the inference wrapper, which also includes the `RollingCohenKappa` utility for evaluating metrics over a rolling window.
-- models/sml/temporally_augmented_classifier.py: The class TemporallyAugmentedClassifier implements temporal augmentation given a model.
+- `models/sml/temporally_augmented_classifier.py`: The class TemporallyAugmentedClassifier implements temporal augmentation given a model.
 ### evaluation
 It contains the python modules to implement the prequential evaluation used for the experiments.
 #### detectors
