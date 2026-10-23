@@ -174,6 +174,9 @@ class MagicManager(object):
         return torch.optim.Adam(model.parameters(), lr=self.lr)
 
     def store_masks_biases(self):
+        if self.in_expansion:
+            self._decide_best_model()
+
         self.piggymask_list[self.curr_task_idx] = pickle.loads(
             pickle.dumps(self.model.get_piggymasks())
         )

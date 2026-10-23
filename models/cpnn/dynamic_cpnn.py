@@ -13,7 +13,7 @@ class SingleModel:
     It implements the class that represents a single model stored in a DYNcPNN.
     """
 
-    def __init__(self, model: cPNN, timestamp: int = time.time()):
+    def __init__(self, model: cPNN, timestamp: int = None):
         """
         Parameters
         ----------
@@ -23,6 +23,8 @@ class SingleModel:
             The model's last selection timestamp. If not expressed it's equal to the current timestamp.
         """
         self.model: cPNN = model
+        if timestamp is None:
+            timestamp = time.time()
         self.timestamp: int = timestamp
 
     def __str__(self):
@@ -202,14 +204,14 @@ class DynamicCPNN:
             self.drift_cont += 1
             if (
                 self.store_models
-                and len(self.concept_x) < self.data_points_previous_concept
+                and len(self.concept_x["new"]) < self.data_points_previous_concept
             ):
                 self.concept_x["new"].append(x)
                 self.concept_y["new"].append(y)
         elif (
             self.stream_start
             and self.store_models
-            and len(self.concept_x) < self.data_points_previous_concept
+            and len(self.concept_x["new"]) < self.data_points_previous_concept
         ):
             self.concept_x["new"].append(x)
             self.concept_y["new"].append(y)
@@ -525,20 +527,40 @@ class DynamicCPNN:
                 self._previous_data_points = None
             self.predictions = {}
         if mode and not self.inference:
-            self._ensemble_old = self.ensemble.copy()
-            self._selected_old = self.selected
-            self._metrics_old = [pickle.loads(pickle.dumps(m)) for m in self.metrics]
             if self._previous_data_points is not None:
                 self._previous_data_points_old = self._previous_data_points.copy()
             else:
                 self._previous_data_points_old = None
-            self.ensemble = [
-                ModelEnsemble(
-                    m.model, model_type=2, train=False, model_idx=i, column=col
-                )
-                for i, m in enumerate(self.models)
-                for col in range(0, len(m.model.columns.columns))
-            ]
+            self._ensemble_old = self.ensemble.copy()
+            self._selected_old = self.selected
+            self._metrics_old = [pickle.loads(pickle.dumps(m)) for m in self.metrics]
+
+            candidate_models = [m.model for m in self.models]
+            candidate_models.extend(m.model for m in self._ensemble_old)
+            if self.old_model is not None:
+                candidate_models.append(self.old_model)
+            unique_models = []
+            seen = set()
+            for model in candidate_models:
+                if id(model) not in seen:
+                    seen.add(id(model))
+                    unique_models.append(model)
+
+            inference_ensemble = []
+            for model_idx, model in enumerate(unique_models):
+                inference_model = pickle.loads(pickle.dumps(model))
+                inference_model.reset_previous_data_points()
+                for col in range(len(inference_model.columns.columns)):
+                    inference_ensemble.append(
+                        ModelEnsemble(
+                            model=inference_model,
+                            model_type=2,
+                            train=False,
+                            model_idx=model_idx,
+                            column=col,
+                        )
+                    )
+            self.ensemble = inference_ensemble
             self.selected = 0
             self.metrics = [metrics.CohenKappa() for _ in self.ensemble]
             self._previous_data_points = None

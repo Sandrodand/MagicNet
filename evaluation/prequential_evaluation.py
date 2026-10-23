@@ -248,7 +248,7 @@ class EvaluatePrequential:
                 )
             if metric == "accuracy":
                 return river_utils.Rolling(
-                    river_metrics.Accuracy(), window_size=rolling
+                    river_metrics.BalancedAccuracy(), window_size=rolling
                 )
         # if metric == 'kappa_t':
         #     return CohenKappaTemporal()
