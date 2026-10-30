@@ -9,6 +9,7 @@ from models.crnn.cgru import cGRULinear
 from models.crnn.clstm import cLSTMLinear
 from models.cpnn.cpnn import cPNN
 from models.magic.magic_net import MagicNet
+from models.mh_crnn.mhcrnn import MultiHeadCrnn
 from models.sml.temporally_augmented_classifier import TemporallyAugmentedClassifier
 from models.sml.temporally_augmented_features_classifier import (
     TemporallyAugmentedFeaturesClassifier,
@@ -222,6 +223,22 @@ class Config:
             multi_head=True,
             ignore_option=True,
             expand_option=True,
+            checkpoint_freq=self.save_column_freq,
+            drift_delay=self.drift_delay,
+            output_size=self.output_size,
+        )
+
+    def create_multihead_crnn(self):
+        return MultiHeadCrnn(
+            device=self.device,
+            seq_len=self.seq_len,
+            input_size=self.num_features,
+            train_verbose=False,
+            initial_task_id=self.initial_task,
+            batch_size=self.batch_size,
+            ensemble_batches=self.ensemble_batches,
+            ensemble_th=self.ensemble_th,
+            base_learner_weights=self.base_learner.get_base_learner(),
             checkpoint_freq=self.save_column_freq,
             drift_delay=self.drift_delay,
             output_size=self.output_size,

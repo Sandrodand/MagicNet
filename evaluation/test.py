@@ -127,15 +127,15 @@ learners = [
     #     drift=True,
     #     cpnn=True,
     # ),
-    LearnerConfig(
-        name="MAGIC_Net",
-        model=CFG.create_magic_net,
-        numeric=True,
-        batch_learner=False,
-        drift=True,
-        cpnn=False,
-        magic=True,
-    ),
+    # LearnerConfig(
+    #     name="MAGIC_Net",
+    #     model=CFG.create_magic_net,
+    #     numeric=True,
+    #     batch_learner=False,
+    #     drift=True,
+    #     cpnn=False,
+    #     magic=True,
+    # ),
     # LearnerConfig(
     #     name="MAGIC_Net_sh",
     #     model=CFG.create_magic_net_single_head,
@@ -163,17 +163,17 @@ learners = [
     #     cpnn=False,
     #     magic=True,
     # ),
-    LearnerConfig(
-        name="DyncPNN",
-        model=lambda: DynamicCPNN(
-            [CFG.base_learner.get_base_learner()],
-        ),
-        numeric=True,
-        batch_learner=False,
-        drift=True,
-        cpnn=True,
-        dyn_cpnn=True,
-    ),
+    # LearnerConfig(
+    #     name="DyncPNN",
+    #     model=lambda: DynamicCPNN(
+    #         [CFG.base_learner.get_base_learner()],
+    #     ),
+    #     numeric=True,
+    #     batch_learner=False,
+    #     drift=True,
+    #     cpnn=True,
+    #     dyn_cpnn=True,
+    # ),
 ]
 
 # __________________

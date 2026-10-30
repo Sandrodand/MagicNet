@@ -54,4 +54,51 @@ It runs the prequential evaluation and CL evaluation using the specified configu
 
 Run it with the command `python -m evaluation.test`.
 
+### Head-only ablation (no weight masks)
+
+Add this entry to the experiment's `learners` list:
+
+```python
+LearnerConfig(
+    name="MAGIC_Net_head_only",
+    model=CFG.create_multihead_crnn,
+    numeric=True,
+    batch_learner=False,
+    drift=True,
+    magic=True,
+)
+```
+
+The factory reuses the initialized base learner shared by the other methods,
+including its recurrent weights and initial linear head. Both `BASE_RNN = "gru"`
+and `BASE_RNN = "lstm"` are supported through `cGRULinear` and `cLSTMLinear`.
+
+At every drift, `Ignore` continues training the current model, while `Expand`
+retrieves the pre-drift checkpoint, freezes its backbone and trains a new head.
+The backbone remains trainable until `Expand` is first selected; afterwards,
+`Ignore` only fine tunes the current head. Expansion must outperform `Ignore`
+and exceed its score multiplied by `ENSEMBLE_TH`; ties choose `Ignore`.
+There is no increase in recurrent hidden size.
+
+If `Ignore` wins, the full pre-drift model is stored in `forgotten_models`, using
+MAGIC's delayed checkpoint retrieval through `restore_previous_state()` /
+`get_previous_state()`. This retains the historical backbone as well as the head
+when the backbone is still trainable. Checkpoint frequency, detector delay and
+grace period follow the same behavior as MAGIC Net.
+
+CL evaluation automatically uses `InferenceHeadOnlyMagicNet`, which evaluates
+every stored task with the appropriate backbone and head. Direct usage also
+supports `ensemble_data_points=-1` to keep all candidates throughout inference,
+and `rolling_window` for a rolling Cohen's Kappa.
+
+Save and resume a complete training checkpoint with `pickle.dump(model, file)`
+and `pickle.load(file)`, as in the existing evaluation pipeline. This includes
+pending drift candidates, optimizers, metrics and the pre-drift snapshot. If CL
+inference starts from a checkpoint taken during a drift comparison, it selects
+the provisional winner on an independent copy, leaving training resumable.
+`get_state_dict()` follows MAGIC's weights-only API and returns `None` during
+a pending comparison; it is not a replacement for a complete pickle checkpoint.
+
+Run the regression tests with `python -m pytest -q tests/test_head_only_magic.py`.
+
 The execution stores the pickle files containing the results in the folder specified by the variable `PATH_PERFORMANCE`. For the details about the pickle files, see the documentation in **evaluation/prequential_evaluation.py** and **evaluation/cl_evaluation.py**.

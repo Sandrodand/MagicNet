@@ -35,6 +35,7 @@ class MagicNet:
         checkpoint_freq=1500,
         drift_delay=3000,
         grace_period=5000,
+        manager_class=MagicManager,
         **kwargs,
     ):
         """
@@ -86,6 +87,8 @@ class MagicNet:
             Used to pass pre-initialized weights to the cRNN. If None they are initialized as usual
         cap_sigmoid: bool, default: True.
             True if you want to return 1 as sigmoid value for input exceeding the cap_value.
+        manager_class: class, default: MagicManager.
+            Lifecycle manager. The head-only ablation supplies its own manager.
         kwargs:
             Parameters of column_class.
         """
@@ -128,7 +131,7 @@ class MagicNet:
 
         self.checkpoint_freq = checkpoint_freq
 
-        self.manager = MagicManager(
+        self.manager = manager_class(
             ensemble_batches=ensemble_batches,
             input_size=input_size,
             threshold_fn=threshold_fn,

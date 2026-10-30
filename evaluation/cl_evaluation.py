@@ -12,6 +12,8 @@ from evaluation.learner_config import LearnerConfig
 from evaluation.evaluation_utils import compute_model_size, compute_magic_size
 from models.cpnn.inference_cpnn import InferenceCPNN
 from models.magic.inference_magic import InferenceMagicNet
+from models.mh_crnn.mhcrnn import MultiHeadCrnn
+from models.mh_crnn.inference_mhcrnn import InferenceMultiHeadCRNN
 import torch
 
 
@@ -195,7 +197,10 @@ class EvaluateContinualLearning:
                 ):
                     model_task = InferenceCPNN(model_task)
                 if model_dict.magic:
-                    model_task = InferenceMagicNet(model_task)
+                    if isinstance(model_task, MultiHeadCrnn):
+                        model_task = InferenceMultiHeadCRNN(model_task)
+                    else:
+                        model_task = InferenceMagicNet(model_task)
                     size = compute_magic_size(model_task.models)
                 if model_dict.cpnn and not model_dict.drift:
                     model_task.columns.to(torch.device("cpu"))
