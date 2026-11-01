@@ -1,5 +1,6 @@
 # this file is for Main network that contains piggyback layers with masks.
 import copy
+from math import log
 
 import torch
 import torch.nn as nn
@@ -254,6 +255,25 @@ class PiggyBackGRU(nn.Module):
     def reinit_linear_bias(self):
         if not self.multi_head:
             self.classifier[1].reinit_linear_bias()
+
+    def reinit_newly_frozen_masks(self, previous_freeze_masks):
+        """Make newly frozen sigmoid connections adaptable in Mask-Last.
+
+        Previously trainable weights have a zero in the old freeze mask. Their
+        transparent masks start at 0.9 instead of remaining at the sigmoid cap.
+        Existing learnable masks keep their logits. Binary masks already use
+        an STE and retain their previous initialization.
+        """
+        if self.threshold_fn != "sigmoid":
+            return
+        mask_logit = log(0.9 / (1 - 0.9))
+        with torch.no_grad():
+            for module in self.classifier:
+                for name, param in module.named_parameters():
+                    if name.startswith("mask_real_"):
+                        key = name[len("mask_real_") :]
+                        newly_frozen = previous_freeze_masks[key].eq(0).to(param.device)
+                        param.masked_fill_(newly_frozen, mask_logit)
 
     def expand_hidden(self, neurons_to_add):
         """

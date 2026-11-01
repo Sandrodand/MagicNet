@@ -94,6 +94,12 @@ padded with effective zeros. Their reconstruction preserves exact zero and one,
 so connections introduced by later expansions remain disabled for older tasks.
 Binary masks retain their existing binarization behavior.
 
+At a drift, Mask-Last freezes previously trainable weights and initializes their
+sigmoid masks to an effective value of `0.9` (logit approximately `2.1972`). Masks
+on already frozen weights retain their previous logits. This includes recurrent
+bias masks and, in the single-head variant, linear weight masks. Binary masks
+retain their logits and their straight-through estimator.
+
 CL initialization resets the temporal context on the freshly reconstructed
 task models, including models restored from the pool. Each test sequence starts
 without training data in its window; repeated resets leave the source checkpoint

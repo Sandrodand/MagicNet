@@ -294,6 +294,7 @@ class MagicManager(object):
         # From the third concept the ensemble is enlarged based on the mode chosen
 
         if self.previous_piggy:
+            backbone_piggy_last.reinit_newly_frozen_masks(ignore_masks)
             self.ensemble["PiggyMask_last"] = backbone_piggy_last
             # Reinitialize piggymasks with the ones from the previous concept
             self.ensemble_masks["PiggyMask_last"] = pickle.loads(
