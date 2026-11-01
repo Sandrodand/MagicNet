@@ -388,7 +388,7 @@ try:
         eval_preq = EvaluatePrequential(
             batch_size=batch_size,
             metrics=METRICS,
-            anytime_learners=learners,
+            learners=learners,
             data_stream=data_stream,
             path_write=current_path_performance,
             suffix=suffix,

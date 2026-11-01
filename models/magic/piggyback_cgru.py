@@ -12,6 +12,7 @@ class PiggyBackGRU(nn.Module):
     A continuous GRU model that supports continuous differentiable masking (Piggyback)
     for selective reuse of frozen weights and dynamic structural expansion.
     """
+
     def __init__(
         self,
         input_size=4,
@@ -30,9 +31,7 @@ class PiggyBackGRU(nn.Module):
         seq_len=5,
         mask_weights=[],
         cGRU_weights=None,
-        cap_sigmoid=True,
         multi_head=True,
-        initial_task_id=1,
     ):
         """
         Parameters
@@ -69,12 +68,8 @@ class PiggyBackGRU(nn.Module):
             Pre-initialized mask weights to load.
         cGRU_weights : object, default: None
             Pre-initialized GRU weights to load.
-        cap_sigmoid : bool, default: True
-            If True, caps the sigmoid mask activation to 1 at extreme values.
         multi_head : bool, default: True
             If True, instantiates a separate output head for each task.
-        initial_task_id : int, default: 1
-            The identifier for the initial concept.
         """
         super(PiggyBackGRU, self).__init__()
 
@@ -88,7 +83,6 @@ class PiggyBackGRU(nn.Module):
         self.threshold_fn = threshold_fn
         self.seq_len = seq_len
         self.mask_weights = mask_weights
-        self.cap_sigmoid = cap_sigmoid
         self.multi_head = multi_head
 
         if frozen_mask_param is None:
@@ -128,7 +122,6 @@ class PiggyBackGRU(nn.Module):
             seq_len=self.seq_len,
             GRU_mask_weights=self.GRU_mask_weights,
             GRU_weights=GRU_weights,
-            cap_sigmoid=cap_sigmoid,
         )
 
         if not self.multi_head:
@@ -142,13 +135,16 @@ class PiggyBackGRU(nn.Module):
                     threshold=threshold,
                     Linear_mask_weights=self.Linear_mask_weights,
                     linear_weights=linear_weights,
-                    cap_sigmoid=cap_sigmoid,
                 ),
             )
         else:
             self.classifier = nn.Sequential(gru_layer)
             self.heads = nn.ModuleDict()
-            self.heads[str(initial_task_id)] = linear_weights
+            self.heads["1"] = (
+                copy.deepcopy(linear_weights)
+                if linear_weights is not None
+                else nn.Linear(hidden_size, output_size)
+            )
             self.heads.to(self.device)
 
         self.classifier.to(self.device)
@@ -193,8 +189,8 @@ class PiggyBackGRU(nn.Module):
 
     def _pad_historical_masks(self, historical_masks):
         """
-        It adapts an old mask to the current model's shape. It uses -50.0 as padding to guarantee that the corresponding
-         sigmoid value is 0.
+        It adapts effective historical masks to the current model's shape.
+        New connections are padded with zero before conversion back to logits.
         """
         # Prendiamo le maschere attuali per sapere quali sono le dimensioni "giuste" di oggi
         reference_masks = self.get_piggymasks()
@@ -209,7 +205,7 @@ class PiggyBackGRU(nn.Module):
                 padded_masks[name] = old_tensor
                 continue
 
-            new_tensor = torch.full(target_shape, -50.0, device=old_tensor.device)
+            new_tensor = old_tensor.new_zeros(target_shape)
 
             # Managing GRU layers (with 3 concatenated gates: Reset, Update, New)
             if (
@@ -261,7 +257,7 @@ class PiggyBackGRU(nn.Module):
 
     def expand_hidden(self, neurons_to_add):
         """
-        Expands the hidden state capacity of the GRU layer by allocating new neurons, 
+        Expands the hidden state capacity of the GRU layer by allocating new neurons,
         while retaining and freezing previously learned weights.
 
         Parameters
@@ -272,7 +268,7 @@ class PiggyBackGRU(nn.Module):
         Returns
         -------
         dict
-            A dictionary containing freeze masks (set to 1) for the newly added weights, 
+            A dictionary containing freeze masks (set to 1) for the newly added weights,
             allowing them to be trained while preserving older weights.
         """
         self.hidden_size = round(self.hidden_size + neurons_to_add)

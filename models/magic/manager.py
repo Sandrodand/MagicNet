@@ -26,12 +26,10 @@ class MagicManager(object):
         train_epochs: int = 10,
         train_verbose: bool = False,
         threshold_fn="sigmoid",
-        initial_task_id=1,
         hidden_size=None,
         hidden_mult=None,
         ensemble_th=None,
         base_learner_weights=None,
-        cap_sigmoid=True,
         output_size=2,
         multi_head=True,
         ignore_option=True,
@@ -64,8 +62,6 @@ class MagicManager(object):
             If True, prints epoch-level training metrics.
         threshold_fn : str, default: "sigmoid"
             The masking threshold function (e.g., "sigmoid", "binarizer").
-        initial_task_id : int, default: 1
-            Identifier for the first task/concept.
         hidden_size : int, default: None
             Number of hidden units in the recurrent layer.
         hidden_mult : int, default: None
@@ -75,8 +71,6 @@ class MagicManager(object):
             is greater than mask-only performance multiplied by this factor.
         base_learner_weights : dict, default: None
             Pre-initialized weights to inject into the base learner.
-        cap_sigmoid : bool, default: True
-            Whether to cap the upper limit of the sigmoid function.
         output_size : int, default: 2
             Number of output classes.
         multi_head : bool, default: True
@@ -123,7 +117,6 @@ class MagicManager(object):
         self.ensemble_choices = []
         self.ensemble_perf = []
         self.biases = {}
-        self.cap_sigmoid = cap_sigmoid
         self.output_size = output_size
 
         self.current_perf = {}
@@ -133,16 +126,16 @@ class MagicManager(object):
         self.criterion = torch.nn.CrossEntropyLoss(reduction="mean")
         self.criterion.to(self.device)
         self.hidden_mult = hidden_mult
-        self.curr_task_idx = initial_task_id
-        self.initial_task_id = initial_task_id
+        self.curr_task_idx = 1
+        self.initial_task_id = 1
         self.training_counter = 0
         self.last_pred = {}
+        self.pending_predictions = {}
         self.previous_model_state = None
         self.forgotten_models = {}
         self.only_ignore = False
-        if grace_period is not None:
-            self.in_grace_period = True
-            self.grace_period_counter = 0
+        self.in_grace_period = grace_period is not None and grace_period > 0
+        self.grace_period_counter = 0
 
         if model_class == PiggyBackGRU:
             self.model = PiggyBackGRU(
@@ -153,22 +146,26 @@ class MagicManager(object):
                 threshold_fn=threshold_fn,
                 seq_len=seq_len,
                 cGRU_weights=base_learner_weights,
-                cap_sigmoid=self.cap_sigmoid,
                 multi_head=multi_head,
-                initial_task_id=initial_task_id,
             )
             self.model.train()
 
-        if initial_task_id == 1:
-            # Freeze the piggymasks for the first task since we are learning all the weights
-            for name, param in self.model.named_parameters():
-                if name.__contains__("mask"):
-                    param.requires_grad = False
+        # Freeze the piggymasks for the first task since we learn all weights.
+        for name, param in self.model.named_parameters():
+            if name.__contains__("mask"):
+                param.requires_grad = False
 
-            # Create initial freeze masks
-            self.mask_list[initial_task_id] = self.model.create_freezemask()
+        self.mask_list[1] = self.model.create_freezemask()
 
         self.model_optim = self._create_optimizer(self.model)
+
+    def __setstate__(self, state):
+        self.__dict__.update(state)
+        # Older pickle checkpoints did not retain timestamped predictions.
+        self.__dict__.setdefault("pending_predictions", {})
+        if self.grace_period is None or self.grace_period <= 0:
+            self.in_grace_period = False
+        self.__dict__.setdefault("grace_period_counter", 0)
 
     def _create_optimizer(self, model):
         return torch.optim.Adam(model.parameters(), lr=self.lr)
@@ -319,6 +316,7 @@ class MagicManager(object):
             model.to(self.device)
 
         self.last_pred = {}
+        self.pending_predictions = {}
 
     def get_previous_state(self):
         if len(self.checkpoints) > 0:
@@ -334,6 +332,8 @@ class MagicManager(object):
         return pickle.loads(pickle.dumps(self.model))
 
     def force_decision(self):
+        if not self.in_expansion:
+            return
         self._decide_best_model()
 
     def _decide_best_model(self):
@@ -350,9 +350,9 @@ class MagicManager(object):
         if self.expand_option:
             expand_options = ["Expand"]
             bestexpand = max(expand_options, key=lambda k: self.current_perf[k].get())
-            if (
-                self.current_perf[bestexpand].get()
-                > self.ensemble_th * self.current_perf[bestpiggy].get()
+            if self.current_perf[bestexpand].get() > max(
+                self.current_perf[bestpiggy].get(),
+                self.ensemble_th * self.current_perf[bestpiggy].get(),
             ):
                 best_model = bestexpand
             else:
@@ -362,7 +362,9 @@ class MagicManager(object):
 
         if best_model != "Ignore":
             self.previous_piggy = True
-            self.in_grace_period = True
+            self.in_grace_period = (
+                self.grace_period is not None and self.grace_period > 0
+            )
             self.grace_period_counter = 0
         else:
             self.forgotten_models[self.curr_task_idx - 1] = pickle.loads(
@@ -397,6 +399,8 @@ class MagicManager(object):
         self.ensemble_masks = {}
         self.ensemble_optims = {}
         self.current_perf = {}
+        self.last_pred = {}
+        self.pending_predictions = {}
 
     def manage_grace_period(self):
         if self.in_grace_period:
@@ -406,12 +410,13 @@ class MagicManager(object):
                 self.in_grace_period = False
                 print("MAGIC Net cancels the grace period")
 
-    def update_counter(self, counter):
+    def update_counter(self, counter, advance_grace_period=True):
         self.data_point_counter = counter
         if self.checkpoint_freq is not None and not self.in_expansion:
             if self.data_point_counter % self.checkpoint_freq == 0:
                 self.save_checkpoint()
-        self.manage_grace_period()
+        if advance_grace_period:
+            self.manage_grace_period()
 
     def train(self, x, y):
         """
@@ -432,7 +437,6 @@ class MagicManager(object):
             (accuracy, loss, kappa).
 
         """
-        self.manage_grace_period()
         perf_train = {
             "accuracy": [],
             "loss": [],
@@ -565,7 +569,7 @@ class MagicManager(object):
                 else:
                     print(key)
 
-    def predict_one(self, x, task_id=None):
+    def predict_one(self, x, task_id=None, timestamp=-1):
         """
         Computes the model's prediction on the given input. If MAGIC Net is in ensemble phase it returns the prediction
         of the current best-performing model.
@@ -579,17 +583,24 @@ class MagicManager(object):
         for name, model in self.ensemble.items():
             self.last_pred[name] = model(x, task_id=task_id)
 
+        # Store only class labels: delayed evaluation needs neither the graph
+        # nor the full logits. The -1 slot preserves immediate-label usage.
+        self.pending_predictions[timestamp] = {
+            name: int(get_pred_from_outputs(pred)[0][-1].detach().cpu().item())
+            for name, pred in self.last_pred.items()
+        }
+
         best_model = max(zip(self.current_perf.values(), self.current_perf.keys()))[1]
         pred = self.last_pred[best_model]
 
         return pred
 
-    def update_metrics(self, y):
-        for name, pred in self.last_pred.items():
-            with torch.no_grad():
-                _pred, _ = get_pred_from_outputs(pred)
-                _pred = int(_pred[-1].detach().cpu().numpy())
-            self.current_perf[name].update(y, _pred)
+    def update_metrics(self, y, timestamp=-1):
+        # Labels for pre-drift points or sequence warm-up have no candidate
+        # prediction. Popping also prevents scoring the same label twice.
+        predictions = self.pending_predictions.pop(timestamp, {})
+        for name, pred in predictions.items():
+            self.current_perf[name].update(y, pred)
 
     def get_state_dict(self):
         if self.in_expansion is False:

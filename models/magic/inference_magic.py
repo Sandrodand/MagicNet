@@ -148,11 +148,16 @@ class InferenceMagicNet:
 
     def initialize(self):
         self.predictions = {}
+        self._previous_data_points = None
 
         self.models = self.prepare_task_models()
+        # Reset the freshly reconstructed copies, not the models discarded
+        # by prepare_task_models. The source training checkpoint stays intact.
+        for model in self.models:
+            model.reset_previous_data_points()
         if self.rolling_window is not None:
             self.metrics = [
-                river_utils.Rolling(metrics.CohenKappa, window_size=self.rolling_window)
+                river_utils.Rolling(metrics.CohenKappa(), window_size=self.rolling_window)
                 for _ in range(len(self.models))
             ]
         else:
@@ -163,8 +168,4 @@ class InferenceMagicNet:
         self.count = 0
 
     def reset_previous_data_points(self):
-        for m in self.models:
-            m.reset_previous_data_points()
-        self._previous_data_points = None
-        self.predictions = {}
         self.initialize()

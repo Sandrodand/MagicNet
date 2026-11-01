@@ -2,20 +2,10 @@
 
 from copy import deepcopy
 
-from river import metrics, utils
-
 from models.magic.inference_magic import InferenceMagicNet
 
 
 class InferenceMultiHeadCRNN(InferenceMagicNet):
-    def initialize(self):
-        super().initialize()
-        if self.rolling_window is not None:
-            self.metrics = [
-                utils.Rolling(metrics.CohenKappa(), window_size=self.rolling_window)
-                for _ in self.models
-            ]
-
     def prepare_task_models(self):
         model_copy = deepcopy(self.model)
         # A CL checkpoint can fall in the middle of a drift comparison. Decide

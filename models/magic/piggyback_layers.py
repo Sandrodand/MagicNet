@@ -15,7 +15,6 @@ from models.magic.activations import (
     Ternarizer,
     Thresholder,
     inverseCappedSigmoid,
-    inverseSigmoid,
     CAP_VALUE,
 )
 
@@ -164,7 +163,6 @@ class ElementWiseGRU(nn.Module):
         seq_len=10,
         GRU_mask_weights=[],
         GRU_weights=None,
-        cap_sigmoid=True,
     ):
         super(ElementWiseGRU, self).__init__()
 
@@ -185,19 +183,15 @@ class ElementWiseGRU(nn.Module):
         self.threshold = threshold
         self.seq_len = (seq_len,)
         self.GRU_mask_weights = GRU_mask_weights
-        self.cap_sigmoid = cap_sigmoid
-        if cap_sigmoid:
-            self.inverse_thresholder = inverseCappedSigmoid
-        else:
-            self.inverse_thresholder = inverseSigmoid
+        self.inverse_thresholder = inverseCappedSigmoid
 
         self.h0 = np.zeros((1, self.hidden_size))
 
         if GRU_weights is not None:
-            self.weight_ih = Parameter(GRU_weights.weight_ih_l0)
-            self.weight_hh = Parameter(GRU_weights.weight_hh_l0)
-            self.bias_ih_l0 = Parameter(GRU_weights.bias_ih_l0)
-            self.bias_hh_l0 = Parameter(GRU_weights.bias_hh_l0)
+            self.weight_ih = Parameter(GRU_weights.weight_ih_l0.detach().clone())
+            self.weight_hh = Parameter(GRU_weights.weight_hh_l0.detach().clone())
+            self.bias_ih_l0 = Parameter(GRU_weights.bias_ih_l0.detach().clone())
+            self.bias_hh_l0 = Parameter(GRU_weights.bias_hh_l0.detach().clone())
         else:
             self.weight_ih = Parameter(
                 torch.Tensor(3 * hidden_size, input_size).uniform_(
@@ -230,13 +224,8 @@ class ElementWiseGRU(nn.Module):
         elif threshold_fn == "ternarizer":
             self.threshold_fn = Ternarizer()
         else:
-            self.threshold_fn = Thresholder(
-                function=threshold_fn, cap_sigmoid=self.cap_sigmoid
-            )
-            if not self.cap_sigmoid:
-                self.frozen_mask_param = 1
-            else:
-                self.frozen_mask_param = CAP_VALUE
+            self.threshold_fn = Thresholder(function=threshold_fn)
+            self.frozen_mask_param = CAP_VALUE
 
         self.initialize_piggymask(self.frozen_mask_param)
 
@@ -481,7 +470,6 @@ class ElementWiseLinear(nn.Module):
         threshold=5e-3,
         Linear_mask_weights=[],
         linear_weights=None,
-        cap_sigmoid=True,
     ):
         super(ElementWiseLinear, self).__init__()
 
@@ -489,15 +477,11 @@ class ElementWiseLinear(nn.Module):
         self.out_features = out_features
         self.frozen_mask_param = frozen_mask_param
         self.Linear_mask_weights = Linear_mask_weights
-        self.cap_sigmoid = cap_sigmoid
-        if self.cap_sigmoid:
-            self.inverse_thresholder = inverseCappedSigmoid
-        else:
-            self.inverse_thresholder = inverseSigmoid
+        self.inverse_thresholder = inverseCappedSigmoid
 
         if linear_weights is not None:
-            self.weight = Parameter(linear_weights.weight)
-            self.bias = Parameter(linear_weights.bias)
+            self.weight = Parameter(linear_weights.weight.detach().clone())
+            self.bias = Parameter(linear_weights.bias.detach().clone())
         else:
             self.weight = Parameter(
                 torch.Tensor(out_features, in_features).uniform_(
@@ -523,13 +507,8 @@ class ElementWiseLinear(nn.Module):
         elif threshold_fn == "ternarizer":
             self.threshold_fn = Ternarizer()
         else:
-            self.threshold_fn = Thresholder(
-                function=threshold_fn, cap_sigmoid=self.cap_sigmoid
-            )
-            if self.cap_sigmoid:
-                self.frozen_mask_param = CAP_VALUE
-            else:
-                self.frozen_mask_param = 1
+            self.threshold_fn = Thresholder(function=threshold_fn)
+            self.frozen_mask_param = CAP_VALUE
         self.initialize_piggymask(self.frozen_mask_param, Linear_mask_weights)
 
     def reinit_piggymask(self, mask_param_init, freeze_masks=None, mask_params=None):

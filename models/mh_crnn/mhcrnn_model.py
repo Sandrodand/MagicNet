@@ -18,7 +18,6 @@ class MultiHeadCrnnModel(nn.Module):
         output_size=2,
         batch_size=128,
         device="cpu",
-        initial_task_id=1,
         base_learner_weights=None,
     ):
         super().__init__()
@@ -45,11 +44,11 @@ class MultiHeadCrnnModel(nn.Module):
         self.learner.device = self.device
         self.hidden_size = self.learner.hidden_size
         self.output_size = self.learner.output_size
-        self.heads = nn.ModuleDict({str(initial_task_id): self.learner.linear})
+        self.heads = nn.ModuleDict({"1": self.learner.linear})
         self.learner.linear = nn.Identity()
         self.backbone_frozen = False
         self.to(self.device)
-        self.set_trainable_task(initial_task_id)
+        self.set_trainable_task(1)
 
     def forward(self, x, task_id=None):
         if task_id is None:

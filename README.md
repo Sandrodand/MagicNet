@@ -54,6 +54,52 @@ It runs the prequential evaluation and CL evaluation using the specified configu
 
 Run it with the command `python -m evaluation.test`.
 
+`EvaluatePrequential` evaluates only `anytime_learners`, through `predict_one`
+and `learn_one`. Batch learners and the periodic evaluation scenario have been
+removed. The `_anytime` keys and output filenames are retained for CL evaluation
+and existing result analysis. Its `batch_size` still sets rolling metric windows
+and output filenames; recurrent learners manage their training mini-batches.
+
+### Streaming API and delayed labels
+
+MAGIC Net and `MultiHeadCrnn` expose `learn_one` for training. Mini-batch
+training is internal (`_learn_many`); there is no public `learn_many` method.
+Both require `seq_len >= 2`; shorter windows raise `ValueError` at construction.
+MAGIC initializes its own linear head when no base learner is supplied. Imported
+recurrent weights, linear weights and biases are copied, so training does not
+modify a supplied base learner or another model initialized from that learner.
+MAGIC and `MultiHeadCrnn` always start with internal task 1; `initial_task_id`
+is no longer a constructor parameter. Dataset task labels remain independent
+and are handled by the evaluator's `initial_task`. Calling `force_decision()`
+when no drift comparison is pending leaves the model unchanged.
+With delayed labels, pass the same point's timestamp to prediction and training:
+
+```python
+prediction = model.predict_one(x_t, timestamp=t)
+# When the label for point t_labeled becomes available:
+model.learn_one(x_labeled, y_labeled, timestamp=t_labeled)
+```
+
+The prequential evaluator passes these timestamps automatically. Immediate-label
+usage without timestamps remains supported. During a drift comparison, candidate
+predictions are stored by timestamp until their labels arrive; complete pickle
+checkpoints also retain pending predictions. Labels for points that predate the
+comparison or have no prediction during sequence warm-up are not scored.
+The grace period counts labeled data points once, independently of mini-batch
+training, starting after the point that completes the drift decision.
+
+Sigmoid weight masks always use `CappedSigmoid`; the `cap_sigmoid` option has
+been removed from constructors and experiment factories. Historical masks are
+padded with effective zeros. Their reconstruction preserves exact zero and one,
+so connections introduced by later expansions remain disabled for older tasks.
+Binary masks retain their existing binarization behavior.
+
+CL initialization resets the temporal context on the freshly reconstructed
+task models, including models restored from the pool. Each test sequence starts
+without training data in its window; repeated resets leave the source checkpoint
+intact. During the first `seq_len - 1` points, the underlying models return
+`None`, which the inference wrapper continues to represent as class zero.
+
 ### Head-only ablation (no weight masks)
 
 Add this entry to the experiment's `learners` list:

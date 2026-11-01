@@ -9,6 +9,7 @@ class BinarizerFunction(torch.autograd.Function):
     Custom autograd function for binarizing a tensor using a straight-through estimator
     for the backward pass.
     """
+
     @staticmethod
     def forward(ctx, inputs, threshold):
         """
@@ -52,6 +53,7 @@ class TernarizerFunction(torch.autograd.Function):
     Custom autograd function for ternarizing a tensor using a straight-through estimator
     for the backward pass.
     """
+
     @staticmethod
     def forward(ctx, inputs, threshold):
         """
@@ -103,16 +105,14 @@ class Thresholder(nn.Module):
 
     Supported functions include 'linear', 'sigmoid', 'relu', 'tanh', and 'ternarizer'.
     """
-    def __init__(self, function="ternarizer", cap_sigmoid=True):
+
+    def __init__(self, function="ternarizer"):
         super(Thresholder, self).__init__()
         self.threshold = 5e-3
         if function == "linear":
             self.threshold_fn = linear
         elif function == "sigmoid":
-            if not cap_sigmoid:
-                self.threshold_fn = nn.Sigmoid()
-            else:
-                self.threshold_fn = CappedSigmoid()
+            self.threshold_fn = CappedSigmoid()
         elif function == "relu":
             self.threshold_fn = nn.LeakyReLU(negative_slope=0.05)
         elif function == "tanh":
@@ -124,11 +124,12 @@ class Thresholder(nn.Module):
 
 class CappedSigmoid(nn.Module):
     """
-        Applies a capped sigmoid activation function.
+    Applies a capped sigmoid activation function.
 
-        The function behaves like a standard sigmoid but returns 1.0 for inputs
-        greater than or equal to a specified cap_value.
+    The function behaves like a standard sigmoid but returns 1.0 for inputs
+    greater than or equal to a specified cap_value.
     """
+
     def __init__(self, cap_value=CAP_VALUE):
         """
         Parameters
@@ -147,20 +148,19 @@ class CappedSigmoid(nn.Module):
 
 def inverseCappedSigmoid(tensor):
     """
-    Computes the inverse sigmoid (logit) of all values in a PyTorch tensor.
+    Reconstructs logits from effective historical masks, including exact zeros.
 
     Args:
-        tensor (torch.Tensor): Input tensor with values between 0 and 1 (exclusive).
+        tensor (torch.Tensor): Effective mask values in [0, 1].
 
     Returns:
-        torch.Tensor: A tensor with the inverse sigmoid applied element-wise.
+        torch.Tensor: Logits with -inf for zero and CAP_VALUE for one.
+            These boundary values restore disabled/transparent connections
+            during historical inference; they are not trainable initializers.
     """
-    # Ensure values are within valid range for logit calculation
-    epsilon = 1e-6  # To prevent division by zero or log of zero
-    tensor = torch.clamp(tensor, epsilon, 1 - epsilon)
-    logit = torch.log(tensor / (1 - tensor))
+    logit = torch.logit(tensor)
     return torch.where(
-        logit.ge(CAP_VALUE),
+        tensor.eq(1),
         torch.tensor(CAP_VALUE, dtype=logit.dtype, device=logit.device),
         logit,
     )
@@ -168,7 +168,9 @@ def inverseCappedSigmoid(tensor):
 
 def inverseSigmoid(tensor):
     """
-    Computes the inverse sigmoid (logit) of all values in a PyTorch tensor.
+    Legacy helper retained for loading existing pickle checkpoints.
+
+    New layers always use inverseCappedSigmoid.
 
     Args:
         tensor (torch.Tensor): Input tensor with values between 0 and 1 (exclusive).

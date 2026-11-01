@@ -24,7 +24,6 @@ class MultiHeadCrnnManager(MagicManager):
         seq_len=5,
         train_epochs=10,
         train_verbose=False,
-        initial_task_id=1,
         hidden_size=50,
         ensemble_th=1.1,
         base_learner_weights=None,
@@ -50,8 +49,8 @@ class MultiHeadCrnnManager(MagicManager):
         self.batch_size = batch_size
         self.train_epochs = train_epochs
         self.train_verbose = train_verbose
-        self.initial_task_id = initial_task_id
-        self.curr_task_idx = initial_task_id
+        self.initial_task_id = 1
+        self.curr_task_idx = 1
         self.multi_head = True
         self.ignore_option = ignore_option
         self.expand_option = expand_option
@@ -73,6 +72,7 @@ class MultiHeadCrnnManager(MagicManager):
         self.ensemble_perf = []
         self.current_perf = {}
         self.last_pred = {}
+        self.pending_predictions = {}
         self.previous_model_state = None
         self.forgotten_models = {}
         self.criterion = torch.nn.CrossEntropyLoss().to(device)
@@ -83,7 +83,6 @@ class MultiHeadCrnnManager(MagicManager):
             output_size=output_size,
             batch_size=batch_size,
             device=device,
-            initial_task_id=initial_task_id,
             base_learner_weights=base_learner_weights,
         )
         self.model_optim = self._create_optimizer(self.model)
@@ -124,6 +123,7 @@ class MultiHeadCrnnManager(MagicManager):
             name: self._create_optimizer(model) for name, model in self.ensemble.items()
         }
         self.last_pred = {}
+        self.pending_predictions = {}
 
     def _decide_best_model(self):
         if not self.in_expansion:
@@ -174,6 +174,7 @@ class MultiHeadCrnnManager(MagicManager):
         self.ensemble_optims = {}
         self.current_perf = {}
         self.last_pred = {}
+        self.pending_predictions = {}
         self.previous_model_state = None
 
     def _fit_model(self, model, optimizer, x, y):

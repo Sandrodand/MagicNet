@@ -19,7 +19,6 @@ class MagicNet:
         input_size=4,
         train_epochs: int = 10,
         train_verbose: bool = False,
-        initial_task_id: int = 1,
         batch_size: int = 128,
         reset_data_points: bool = False,
         threshold_fn="sigmoid",
@@ -28,7 +27,6 @@ class MagicNet:
         ensemble_batches=50,
         ensemble_th=1.1,
         base_learner_weights=None,
-        cap_sigmoid=True,
         multi_head=True,
         ignore_option=True,
         expand_option=True,
@@ -50,14 +48,13 @@ class MagicNet:
             The learning rate value of the Adam Optimizer.
         seq_len: int, default: 5.
             The length of the sliding window that builds the single sequences.
+            Must be greater than 1.
         stride: int, default: 1.
             The length of the sliding window's stride.
         train_epochs: int, default: 10.
-            The training epochs to perform in learn_many method.
+            The training epochs to perform in _learn_many method.
         train_verbose: bool, default:False.
-            True if, during the learn_many execution, you want to print the metrics after each training epoch.
-        initial_task_id: int, default: 1.
-            The id of the first task. It can be ignored.
+            True if, during the _learn_many execution, you want to print the metrics after each training epoch.
         batch_size: int, default: 128.
             The training mini-batch size. If calling learn_one method, the model will accumulate batch_size data point
             before performing the training.
@@ -85,14 +82,17 @@ class MagicNet:
             initialized ones.
         base_learner_weights: dict of tensors, default: None.
             Used to pass pre-initialized weights to the cRNN. If None they are initialized as usual
-        cap_sigmoid: bool, default: True.
-            True if you want to return 1 as sigmoid value for input exceeding the cap_value.
         manager_class: class, default: MagicManager.
             Lifecycle manager. The head-only ablation supplies its own manager.
         kwargs:
             Parameters of column_class.
         """
-        self.cap_sigmoid = True
+        if "initial_task_id" in kwargs:
+            raise TypeError(
+                "initial_task_id is no longer configurable; the first task is 1"
+            )
+        if seq_len < 2:
+            raise ValueError("seq_len must be greater than 1")
         self.multihead = multi_head
 
         self.columns_args = kwargs
@@ -107,13 +107,12 @@ class MagicNet:
         self.columns_args["train_verbose"] = train_verbose
         self.columns_args["seq_len"] = seq_len
         self.columns_args["model_class"] = model_class
-        self.columns_args["initial_task_id"] = initial_task_id
         self.ensemble_batches = ensemble_batches
         self.ensemble_th = ensemble_th
 
         self.seq_len = seq_len
         self.stride = stride
-        self.task_ids = [initial_task_id]
+        self.task_ids = [1]
         self.previous_data_points_anytime_inference = None
         self.previous_data_points_anytime_hidden = None
         self.previous_data_points_anytime_train = None
@@ -139,7 +138,6 @@ class MagicNet:
             hidden_mult=hidden_mult,
             ensemble_th=ensemble_th,
             base_learner_weights=base_learner_weights,
-            cap_sigmoid=cap_sigmoid,
             multi_head=self.multihead,
             ignore_option=ignore_option,
             expand_option=expand_option,
@@ -240,18 +238,24 @@ class MagicNet:
             The features value of the data points preceding x in the sequence.
             If None, it uses the last seq_len-1 points seen during the last calls of the method.
             It returns None if the model has not seen yet seq_len-1 data points and previous_data_points is None.
+        timestamp: int, default: -1.
+            Timestamp of the labeled point, matching the corresponding predict_one
+            call. Use explicit timestamps for delayed labels; -1 supports immediate labels.
         """
 
         self.x_batch.append(x)
         self.y_batch.append(y)
         self.data_point_counter += 1
+        was_in_expansion = self.manager.in_expansion
         if self.manager.in_expansion is True:
-            self.manager.update_metrics(y)
+            self.manager.update_metrics(y, timestamp=timestamp)
         if len(self.x_batch) == self.batch_size:
-            self.learn_many(np.array(self.x_batch), np.array(self.y_batch))
+            self._learn_many(np.array(self.x_batch), np.array(self.y_batch))
             self.x_batch = []
             self.y_batch = []
-        self.manager.update_counter(self.data_point_counter)
+        self.manager.update_counter(
+            self.data_point_counter, advance_grace_period=not was_in_expansion
+        )
         return None
 
     def add_new_column(self, task_id=None):
@@ -280,7 +284,7 @@ class MagicNet:
         self.x_batch = []
         self.y_batch = []
 
-    def learn_many(self, x: np.array, y: np.array) -> dict:
+    def _learn_many(self, x: np.array, y: np.array) -> dict:
         """
         It trains Magic Net on a single mini-batch of data points.
 
@@ -357,7 +361,11 @@ class MagicNet:
         return x
 
     def predict_one(
-        self, x: np.array, previous_data_points: np.array = None, task_id=None
+        self,
+        x: np.array,
+        previous_data_points: np.array = None,
+        task_id=None,
+        timestamp: int = -1,
     ):
         """
         It performs prediction on a single data point.
@@ -370,6 +378,8 @@ class MagicNet:
             The features value of the data points preceding x in the sequence.
             If None, it uses the last seq_len-1 points seen during the last calls of the method.
             It returns None if the model has not seen yet seq_len-1 data points and previous_data_points is None.
+        timestamp: int, default: -1.
+            Identifier used to match this prediction with its eventual label.
         Returns
         -------
         prediction : int
@@ -377,10 +387,12 @@ class MagicNet:
         """
         x = self._single_data_point_prep(x, previous_data_points)
         if x is None:
+            # No prediction exists for this timestamp during sequence warm-up.
+            self.manager.pending_predictions.pop(timestamp, None)
             return None
         with torch.no_grad():
             pred, _ = get_pred_from_outputs(
-                self.manager.predict_one(x, task_id=task_id)
+                self.manager.predict_one(x, task_id=task_id, timestamp=timestamp)
             )
             pred = int(pred[-1].detach().cpu().numpy())
         return pred
