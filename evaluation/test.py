@@ -15,18 +15,18 @@ MODE = "local"
 #TODO
 PATHS = [
     f"datasets/{d}_{c}conf"
-    for c in range(1, 2)
-    for d in ["weather"]
+    for c in range(1, 11)
+    for d in ["air_quality"]
 ]  # a list containing the paths of the data streams (without the extension)
-PATH_PERFORMANCE = ""
+PATH_PERFORMANCE = "lstm"
 # the path in which to save the results. In the case of a relative path, the performance folder is automatically
 # created
 #TODO
-USE_DETECTOR = False
+USE_DETECTOR = True
 # True if you want to use a detector, False if you want to use the supervised drift information (the "task" column in
 # csv file)
-DETECTOR_SIMULATOR_PRECISION = 0.75
-DETECTOR_SIMULATOR_RECALL = 0.75
+DETECTOR_SIMULATOR_PRECISION = 0.7
+DETECTOR_SIMULATOR_RECALL = 1
 # Set both to None if you want to use the automatic drift detector with ADWIN (Sentinel)
 # Set both to a specific value if you want to simulate a drift detector with a specific recall and precision
 # This configuration works only when setting USE_DETECTOR = True
@@ -53,7 +53,7 @@ UPLOAD_BASE_LEARNER = True
 WRITE_CHECKPOINTS = False
 # True if you want to write the pickle files of the models after each supervised concept's end.
 
-BASE_RNN = ["gru", "lstm"]
+BASE_RNN = ["lstm"]
 # Architectures evaluated together on the same stream and detections.
 SEQ_LEN_PARAM = None
 # The size of the sliding window. If None the default value for the dataset is set.

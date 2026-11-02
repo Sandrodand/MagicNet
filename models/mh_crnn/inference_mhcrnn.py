@@ -13,9 +13,7 @@ class InferenceMultiHeadCRNN(InferenceMagicNet):
         model_copy.manager.force_decision()
         model_copy.manager.in_grace_period = False
         models = []
-        for task_id in range(
-            model_copy.manager.initial_task_id, model_copy.manager.curr_task_idx + 1
-        ):
+        for task_id in model_copy.manager.get_available_task_ids():
             task_model = deepcopy(model_copy)
             manager = task_model.manager
             if task_id in manager.forgotten_models:

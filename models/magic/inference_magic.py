@@ -112,7 +112,7 @@ class InferenceMagicNet:
             model_copy.manager.force_decision()
         model_copy.manager.in_grace_period = False
         model_copy.manager.in_expansion = False
-        for task_id in range(1, self.model.manager.curr_task_idx + 1):
+        for task_id in model_copy.manager.get_available_task_ids():
             task_model = pickle.loads(pickle.dumps(model_copy))
             if task_id in task_model.manager.forgotten_models:
                 task_model.manager.model = pickle.loads(

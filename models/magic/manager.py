@@ -262,12 +262,46 @@ class MagicManager(object):
             self.forgotten_models[self.curr_task_idx - 1] = pickle.loads(
                 pickle.dumps(self.previous_model_state)
             )
+        else:
+            self._discard_previous_task(current_model)
         return {
             "old_model": retain,
             "old_model_k": old_k,
             "current_model_k": current_k,
             "previous_concept_sample_size": len(self.concept_y["old"]),
         }
+
+    def _discard_previous_task(self, current_model):
+        task_id = self.curr_task_idx - 1
+        for name in (
+            "historical_heads",
+            "piggymask_list",
+            "biases",
+            "mask_list",
+            "forgotten_models",
+        ):
+            getattr(self, name, {}).pop(task_id, None)
+        if self.multi_head:
+            del current_model.heads[str(task_id)]
+
+        # Keep Adam state for the surviving parameters without retaining the
+        # discarded head through optimizer references.
+        optimizer = self.ensemble_optims["Ignore"]
+        parameters = set(current_model.parameters())
+        for group in optimizer.param_groups:
+            group["params"] = [p for p in group["params"] if p in parameters]
+        for parameter in list(optimizer.state):
+            if parameter not in parameters:
+                del optimizer.state[parameter]
+
+    def get_available_task_ids(self):
+        """Return stored task IDs plus the current task, allowing gaps."""
+        task_ids = {self.curr_task_idx}
+        for name in ("historical_heads", "piggymask_list", "biases", "forgotten_models"):
+            task_ids.update(getattr(self, name, {}))
+        if self.multi_head:
+            task_ids.update(int(key) for key in self.model.heads)
+        return sorted(task_ids)
 
     def restore_historical_head(self, task_id):
         if self.multi_head and task_id in self.historical_heads:
