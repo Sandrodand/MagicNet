@@ -137,26 +137,6 @@ def callback_func_cl(**kwargs):
     EVAL_CL.evaluate(iterations)
 
 
-def callback_func_smart(**kwargs):
-    if "iteration" in kwargs:
-        iteration = kwargs["iteration"]
-    else:
-        iteration = None
-    if iteration is None:
-        iteration = 0
-    selection = {}
-    for model in kwargs["learners_dict"]:
-        if model.smart:
-            selection[model.name] = {
-                "history": kwargs["models"][
-                    model.name
-                ].columns.selected_columns_history,
-                "final": kwargs["models"][model.name].columns.final_selection,
-            }
-    with open(os.path.join(kwargs["path"], f"selections_{iteration+1}.pkl"), "wb") as f:
-        pickle.dump(selection, f)
-
-
 def callback_func_federated(**kwargs):
     if "suffix" in kwargs:
         iteration = kwargs["suffix"]

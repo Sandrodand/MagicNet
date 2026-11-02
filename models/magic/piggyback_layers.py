@@ -3,11 +3,8 @@ from math import sqrt
 import numpy as np
 import torch.nn as nn
 import torch.nn.functional as F
-from torch.autograd import Variable
-from torch.nn.modules.utils import _pair
 from torch.nn.parameter import Parameter
 
-# importing gru math computation block
 from torch._VF import gru as _VF_gru
 from torch._VF import lstm as _VF_lstm
 from models.magic.activations import (
@@ -17,6 +14,8 @@ from models.magic.activations import (
     inverseCappedSigmoid,
     CAP_VALUE,
 )
+
+from models.magic.checkpoint_compat import recurrent_checkpoint_state, legacy_argument
 
 DEFAULT_THRESHOLD = 5e-3
 
@@ -60,37 +59,11 @@ def GRUBlockMath(
     tuple
         A tuple containing the output tensor and the new hidden state.
     """
-    # print(weight_thresholded_ih)
     tensors = [weight_thresholded_ih, weight_thresholded_hh, bias_ih_l0, bias_hh_l0]
-    # print(tensors)
-    # batch_size = torch.tensor(batch_size)
-    batch_size = None
-    if batch_size == None:
-        output, new_hn = _VF_gru(
-            input,
-            hn,
-            tensors,
-            bias,
-            num_layers,
-            dropout,
-            training,
-            bidirectional,
-            batch_first,
-        )
-    else:
-        output, new_hn = _VF_gru(
-            input,
-            batch_size,
-            hn,
-            tensors,
-            bias,
-            num_layers,
-            dropout,
-            training,
-            bidirectional,
-        )
-    # print(output)
-    return output, new_hn
+    return _VF_gru(
+        input, hn, tensors, bias, num_layers, dropout, training,
+        bidirectional, batch_first,
+    )
 
 
 def LSTMBlockMath(
@@ -107,42 +80,28 @@ def LSTMBlockMath(
     bidirectional=False,
     batch_first=False,
 ):
+    """Run a masked LSTM sequence from the supplied (hidden, cell) states."""
     tensors = [weight_thresholded_ih, weight_thresholded_hh, bias_ih_l0, bias_hh_l0]
-    batch_size = None
-    if batch_size == None:
-        results = _VF_lstm(
-            input,
-            hn,
-            tensors,
-            bias,
-            num_layers,
-            dropout,
-            training,
-            bidirectional,
-            batch_first,
-        )
-    else:
-        results = _VF_lstm(
-            input,
-            batch_size,
-            hn,
-            tensors,
-            bias,
-            num_layers,
-            dropout,
-            training,
-            bidirectional,
-        )
-    output = results[0]
+    output, _, _ = _VF_lstm(
+        input,
+        hn,
+        tensors,
+        bias,
+        num_layers,
+        dropout,
+        training,
+        bidirectional,
+        batch_first,
+    )
     return output
 
 
-class ElementWiseGRU(nn.Module):
-    """
-    A modified GRU layer that maintains learnable masks alongside its standard weights.
-    The effective weights used during the forward pass are computed as the element-wise
-    product of the frozen base weights and the thresholded masks.
-    """
+class ElementWiseRNN(nn.Module):
+    """Architecture-independent recurrent masking, freezing and gate expansion."""
+
+    gate_count = None
+    gate_names = ()
+    mask_parameter_names = ("weight_ih", "weight_hh", "bias_ih_l0", "bias_hh_l0")
 
     def __init__(
         self,
@@ -161,10 +120,12 @@ class ElementWiseGRU(nn.Module):
         threshold_fn="sigmoid",
         threshold=5e-3,
         seq_len=10,
-        GRU_mask_weights=[],
-        GRU_weights=None,
+        recurrent_weights=None,
+        recurrent_mask_weights=None,
     ):
-        super(ElementWiseGRU, self).__init__()
+        super().__init__()
+        if self.gate_count is None:
+            raise TypeError("Instantiate a concrete ElementWiseRNN subclass")
 
         # PARAMETERS
         self.input_size = input_size
@@ -182,35 +143,46 @@ class ElementWiseGRU(nn.Module):
         self.threshold_fn = threshold_fn
         self.threshold = threshold
         self.seq_len = (seq_len,)
-        self.GRU_mask_weights = GRU_mask_weights
+        self.recurrent_mask_weights = (
+            [] if recurrent_mask_weights is None else
+            [torch.as_tensor(mask).detach().clone() for mask in recurrent_mask_weights]
+        )
         self.inverse_thresholder = inverseCappedSigmoid
 
-        self.h0 = np.zeros((1, self.hidden_size))
+        self._reset_initial_state()
 
-        if GRU_weights is not None:
-            self.weight_ih = Parameter(GRU_weights.weight_ih_l0.detach().clone())
-            self.weight_hh = Parameter(GRU_weights.weight_hh_l0.detach().clone())
-            self.bias_ih_l0 = Parameter(GRU_weights.bias_ih_l0.detach().clone())
-            self.bias_hh_l0 = Parameter(GRU_weights.bias_hh_l0.detach().clone())
+        if recurrent_weights is not None:
+            self.weight_ih = Parameter(recurrent_weights.weight_ih_l0.detach().clone())
+            self.weight_hh = Parameter(recurrent_weights.weight_hh_l0.detach().clone())
+            self.bias_ih_l0 = Parameter(recurrent_weights.bias_ih_l0.detach().clone())
+            self.bias_hh_l0 = Parameter(recurrent_weights.bias_hh_l0.detach().clone())
         else:
             self.weight_ih = Parameter(
-                torch.Tensor(3 * hidden_size, input_size).uniform_(
+                torch.empty(
+                    self.gate_count * self.hidden_size, input_size, device=self.device
+                ).uniform_(
                     -sqrt(1 / self.hidden_size), sqrt(1 / self.hidden_size)
                 )
             )
             self.weight_hh = Parameter(
-                torch.Tensor(3 * hidden_size, hidden_size).uniform_(
+                torch.empty(
+                    self.gate_count * self.hidden_size, self.hidden_size, device=self.device
+                ).uniform_(
                     -sqrt(1 / self.hidden_size), sqrt(1 / self.hidden_size)
                 )
             )
 
             self.bias_ih_l0 = Parameter(
-                torch.Tensor(3 * hidden_size).uniform_(
+                torch.empty(
+                    self.gate_count * self.hidden_size, device=self.device
+                ).uniform_(
                     -sqrt(1 / self.hidden_size), sqrt(1 / self.hidden_size)
                 )
             )
             self.bias_hh_l0 = Parameter(
-                torch.Tensor(3 * hidden_size).uniform_(
+                torch.empty(
+                    self.gate_count * self.hidden_size, device=self.device
+                ).uniform_(
                     -sqrt(1 / self.hidden_size), sqrt(1 / self.hidden_size)
                 )
             )
@@ -228,9 +200,21 @@ class ElementWiseGRU(nn.Module):
             self.frozen_mask_param = CAP_VALUE
 
         self.initialize_piggymask(self.frozen_mask_param)
+        if self.recurrent_mask_weights:
+            if len(self.recurrent_mask_weights) != len(self.mask_parameter_names):
+                raise ValueError("Provide one initial mask for each recurrent parameter")
+            with torch.no_grad():
+                for name, values in zip(self.mask_parameter_names, self.recurrent_mask_weights):
+                    parameter = getattr(self, "mask_real_" + name)
+                    if values.shape != parameter.shape:
+                        raise ValueError(f"Initial mask shape does not match {name}")
+                    parameter.copy_(values.to(parameter))
+
+    def __setstate__(self, state):
+        super().__setstate__(recurrent_checkpoint_state(state))
 
     def forward(self, input):
-        self.hn = self._build_initial_state(input, self.h0)
+        initial_state = self._initial_state(input)
 
         # Apply threshold function to real valued masks
         mask_thresholded_ih = self.threshold_fn(self.mask_real_weight_ih)
@@ -244,24 +228,20 @@ class ElementWiseGRU(nn.Module):
         weight_thresholded_bias_ih = mask_thresholded_bias_ih_l0 * self.bias_ih_l0
         weight_thresholded_bias_hh = mask_thresholded_bias_hh_l0 * self.bias_hh_l0
 
-        out, _ = GRUBlockMath(
+        return self._recurrent_forward(
             input,
-            self.hn,
+            initial_state,
             weight_thresholded_ih,
             weight_thresholded_hh,
             weight_thresholded_bias_ih,
             weight_thresholded_bias_hh,
-            self.batch_size,
-            self.bias,
-            self.num_layers,
-            self.dropout,
-            self.training,
-            self.bidirectional,
-            self.batch_first,
         )
-        # Get output using modified weight.
 
-        return out
+    def _initial_state(self, input):
+        raise NotImplementedError
+
+    def _recurrent_forward(self, input, state, weight_ih, weight_hh, bias_ih, bias_hh):
+        raise NotImplementedError
 
     def reinit_piggymask(self, mask_param_init, freeze_masks=None, mask_params=None):
         if mask_params is not None:
@@ -315,23 +295,31 @@ class ElementWiseGRU(nn.Module):
         """
         Parameters are expanded by a factor of "addendum". New weights are initialized normally while
         previously learned ones are kept and frozen.
-        Rispettando la struttura a 3 porte (Reset, Update, New) della GRU.
+        Each gate retains its old weight and bias blocks at the expanded offsets.
         """
         old_hidden_size = self.hidden_size
         self.hidden_size = round(self.hidden_size + addendum)
         freeze_masks = {}
 
         # 1. Creiamo i nuovi tensori
-        temp_weight_ih = torch.Tensor(3 * self.hidden_size, self.input_size).uniform_(
+        temp_weight_ih = self.weight_ih.new_empty(
+            self.gate_count * self.hidden_size, self.input_size
+        ).uniform_(
             -sqrt(1 / self.hidden_size), sqrt(1 / self.hidden_size)
         )
-        temp_weight_hh = torch.Tensor(3 * self.hidden_size, self.hidden_size).uniform_(
+        temp_weight_hh = self.weight_hh.new_empty(
+            self.gate_count * self.hidden_size, self.hidden_size
+        ).uniform_(
             -sqrt(1 / self.hidden_size), sqrt(1 / self.hidden_size)
         )
-        temp_bias_ih_l0 = torch.Tensor(3 * self.hidden_size).uniform_(
+        temp_bias_ih_l0 = self.bias_ih_l0.new_empty(
+            self.gate_count * self.hidden_size
+        ).uniform_(
             -sqrt(1 / self.hidden_size), sqrt(1 / self.hidden_size)
         )
-        temp_bias_hh_l0 = torch.Tensor(3 * self.hidden_size).uniform_(
+        temp_bias_hh_l0 = self.bias_hh_l0.new_empty(
+            self.gate_count * self.hidden_size
+        ).uniform_(
             -sqrt(1 / self.hidden_size), sqrt(1 / self.hidden_size)
         )
 
@@ -340,7 +328,7 @@ class ElementWiseGRU(nn.Module):
         freeze_masks["bias_ih_l0"] = torch.zeros_like(temp_bias_ih_l0)
         freeze_masks["bias_hh_l0"] = torch.zeros_like(temp_bias_hh_l0)
 
-        for i in range(3):
+        for i in range(self.gate_count):
             old_start = i * old_hidden_size
             old_end = (i + 1) * old_hidden_size
             new_start = i * self.hidden_size
@@ -367,13 +355,13 @@ class ElementWiseGRU(nn.Module):
         self.bias_ih_l0 = Parameter(temp_bias_ih_l0)
         self.bias_hh_l0 = Parameter(temp_bias_hh_l0)
 
-        self.h0 = np.zeros((1, self.hidden_size))
+        self._reset_initial_state()
         self.adjust_piggymask(mask_param_init=self.frozen_mask_param)
 
         return freeze_masks
 
     def adjust_piggymask(self, mask_param_init):
-        old_hidden_size = self.mask_real_weight_ih.size(0) // 3
+        old_hidden_size = self.mask_real_weight_ih.size(0) // self.gate_count
 
         temp_mask_real_weight_ih = self.weight_ih.data.new(self.weight_ih.size()).fill_(
             mask_param_init
@@ -389,7 +377,7 @@ class ElementWiseGRU(nn.Module):
         ).fill_(mask_param_init)
 
         # Trasloco a blocchi anche per le maschere continue!
-        for i in range(3):
+        for i in range(self.gate_count):
             old_start = i * old_hidden_size
             old_end = (i + 1) * old_hidden_size
             new_start = i * self.hidden_size
@@ -451,10 +439,69 @@ class ElementWiseGRU(nn.Module):
         self.mask_real_bias_ih_l0 = Parameter(temp_mask_real_bias_ih_l0)
         self.mask_real_bias_hh_l0 = Parameter(temp_mask_real_bias_hh_l0)
 
+    def _reset_initial_state(self):
+        self.h0 = np.zeros((1, self.hidden_size))
+
     def _build_initial_state(self, x, state):
-        s = torch.from_numpy(np.tile(state, (1, x.size()[0], 1))).float()
-        s.requires_grad = True
-        return s.to(self.device)
+        return torch.as_tensor(
+            np.tile(state, (1, x.size(0 if self.batch_first else 1), 1)),
+            dtype=x.dtype, device=x.device
+        ).requires_grad_(True)
+
+
+class ElementWiseGRU(ElementWiseRNN):
+    """Reset, update and candidate gates with one hidden state."""
+
+    gate_names = ("reset", "update", "new")
+    gate_count = len(gate_names)
+
+    def __init__(self, *args, GRU_weights=None, GRU_mask_weights=None, **kwargs):
+        if GRU_weights is not None:
+            kwargs["recurrent_weights"] = legacy_argument(
+                kwargs.get("recurrent_weights"), GRU_weights
+            )
+        if GRU_mask_weights is not None:
+            kwargs["recurrent_mask_weights"] = legacy_argument(
+                kwargs.get("recurrent_mask_weights"), GRU_mask_weights
+            )
+        super().__init__(*args, **kwargs)
+
+    def _initial_state(self, input):
+        self.hn = self._build_initial_state(input, self.h0)
+        return self.hn
+
+    def _recurrent_forward(self, input, state, weight_ih, weight_hh, bias_ih, bias_hh):
+        output, _ = GRUBlockMath(
+            input, state, weight_ih, weight_hh, bias_ih, bias_hh,
+            bias=self.bias, num_layers=self.num_layers, dropout=self.dropout,
+            training=self.training, bidirectional=self.bidirectional,
+            batch_first=self.batch_first,
+        )
+        return output
+
+
+class ElementWiseLSTM(ElementWiseRNN):
+    """Input, forget, cell and output gates with hidden and cell states."""
+
+    gate_names = ("input", "forget", "cell", "output")
+    gate_count = len(gate_names)
+
+    def _reset_initial_state(self):
+        super()._reset_initial_state()
+        self.c0 = np.zeros((1, self.hidden_size))
+
+    def _initial_state(self, input):
+        self.hn = self._build_initial_state(input, self.h0)
+        self.cn = self._build_initial_state(input, self.c0)
+        return self.hn, self.cn
+
+    def _recurrent_forward(self, input, state, weight_ih, weight_hh, bias_ih, bias_hh):
+        return LSTMBlockMath(
+            input, state, weight_ih, weight_hh, bias_ih, bias_hh,
+            bias=self.bias, num_layers=self.num_layers, dropout=self.dropout,
+            training=self.training, bidirectional=self.bidirectional,
+            batch_first=self.batch_first,
+        )
 
 
 class ElementWiseLinear(nn.Module):
@@ -468,15 +515,23 @@ class ElementWiseLinear(nn.Module):
         frozen_mask_param=2e-2,
         threshold_fn="sigmoid",
         threshold=5e-3,
-        Linear_mask_weights=[],
+        linear_mask_weights=None,
         linear_weights=None,
+        *,
+        Linear_mask_weights=None,
     ):
         super(ElementWiseLinear, self).__init__()
 
         self.in_features = in_features
         self.out_features = out_features
         self.frozen_mask_param = frozen_mask_param
-        self.Linear_mask_weights = Linear_mask_weights
+        linear_mask_weights = legacy_argument(linear_mask_weights, Linear_mask_weights)
+        if isinstance(linear_mask_weights, (list, tuple)) and not linear_mask_weights:
+            linear_mask_weights = None
+        self.linear_mask_weights = (
+            None if linear_mask_weights is None else
+            torch.as_tensor(linear_mask_weights).detach().clone()
+        )
         self.inverse_thresholder = inverseCappedSigmoid
 
         if linear_weights is not None:
@@ -509,7 +564,10 @@ class ElementWiseLinear(nn.Module):
         else:
             self.threshold_fn = Thresholder(function=threshold_fn)
             self.frozen_mask_param = CAP_VALUE
-        self.initialize_piggymask(self.frozen_mask_param, Linear_mask_weights)
+        self.initialize_piggymask(self.frozen_mask_param, self.linear_mask_weights)
+
+    def __setstate__(self, state):
+        super().__setstate__(recurrent_checkpoint_state(state))
 
     def reinit_piggymask(self, mask_param_init, freeze_masks=None, mask_params=None):
         if mask_params is not None:
@@ -546,7 +604,7 @@ class ElementWiseLinear(nn.Module):
         return freeze_masks
 
     def initialize_piggymask(
-        self, mask_param_init, Linear_mask_weights=[], freeze_mask=None
+        self, mask_param_init, linear_mask_weights=None, freeze_mask=None
     ):
         temp_mask_real_weight = self.weight.data.new(self.weight.size())
         temp_mask_real_weight.fill_(mask_param_init)
@@ -556,8 +614,11 @@ class ElementWiseLinear(nn.Module):
                 freeze_mask["weight"].eq(1)
             ].uniform_(-1 * mask_param_init, mask_param_init)
 
-        if Linear_mask_weights != []:
-            self.mask_real_weight = Parameter(Linear_mask_weights)
+        if linear_mask_weights is not None:
+            values = torch.as_tensor(linear_mask_weights).to(self.weight)
+            if values.shape != self.weight.shape:
+                raise ValueError("Initial linear mask shape does not match the weights")
+            self.mask_real_weight = Parameter(values.detach().clone())
         else:
             self.mask_real_weight = Parameter(temp_mask_real_weight)
 

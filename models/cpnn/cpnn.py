@@ -91,6 +91,8 @@ class cPNN:
         """
         if "train_verbose" in kwargs:
             raise TypeError("train_verbose is no longer supported by cPNN")
+        if "stride" in kwargs:
+            raise TypeError("stride is no longer configurable; it is always 1")
         if seq_len < 2:
             raise ValueError("seq_len must be greater than 1")
         self.anytime_learner = anytime_learner

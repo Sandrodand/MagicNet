@@ -55,13 +55,13 @@ UPLOAD_BASE_LEARNER = True
 WRITE_CHECKPOINTS = False
 # True if you want to write the pickle files of the models after each supervised concept's end.
 
-BASE_RNN = "gru"
-# the base learner. it can be gru or lstm
+BASE_RNN = ["gru", "lstm"]
+# Architectures evaluated together on the same stream and detections.
 SEQ_LEN_PARAM = None
 # The size of the sliding window. If None the default value for the dataset is set.
 BATCH_SIZE_PARAM = None
 # the batch size of periodic learners and classifiers. If None the default value for the dataset is set.
-HIDDEN_SIZE_PARAM = None
+HIDDEN_SIZE_PARAM = {"gru": None, "lstm": None}
 # the hidden size of the cRNN (cLSTM or cGRU). Set None to use the default value for the dataset.
 MAX_OLD_LABELS = 20
 # the number of the maximum temporal order of SML temporal augmentation.
@@ -77,9 +77,9 @@ DELAY_PARAM = None
 # prediction)
 
 ###---MAGIC Net---
-ENSEMBLE_BATCHES = 30
-HIDDEN_MULT = None
-ENSEMBLE_TH = 1.05
+ENSEMBLE_BATCHES = {"gru": 30, "lstm": 30}
+HIDDEN_MULT = {"gru": None, "lstm": None}
+ENSEMBLE_TH = {"gru": 1.05, "lstm": 1.05}
 
 ITERATIONS = 1
 # number of experiments for each dataset
@@ -87,350 +87,276 @@ CALLBACK_FUNC = None
 # function to call after each iteration (set it to None). It will use the CL evaluation if DO_CL = True.
 OUTPUT_FILE = None
 # the name of the output file in outputs dir. If None, it will use the name of the current data stream.
-suffix = f"_{HIDDEN_SIZE_PARAM}hs" if HIDDEN_SIZE_PARAM is not None else ""
-# the suffix to add the files containing the evaluation results.
+suffix = ""
+# Optional common output suffix. RNN types are distinguished by learner names.
 
 # LEARNERS
-CFG = Config(base_learner=BASE_RNN)
-learners = [
-    # LearnerConfig(
-    #     name="ARF",
-    #     model=CFG.create_arf,
-    #     numeric=False,
-    #     batch_learner=False,
-    #     drift=False,
-    #     cpnn=False,
-    #     temp_dep=False,
-    # ),
-    # LearnerConfig(
-    #     name="ARF_TA",
-    #     model=CFG.create_arf_ta,
-    #     numeric=False,
-    #     batch_learner=False,
-    #     drift=False,
-    #     cpnn=False,
-    #     temp_dep=True,
-    # ),
-    # LearnerConfig(
-    #     name="cGRU",
-    #     model=CFG.base_learner.get_cpnn,
-    #     numeric=True,
-    #     batch_learner=False,
-    #     drift=False,
-    #     cpnn=True,
-    # ),
-    # LearnerConfig(
-    #     name="cPNN",
-    #     model=CFG.base_learner.get_cpnn,
-    #     numeric=True,
-    #     batch_learner=False,
-    #     drift=True,
-    #     cpnn=True,
-    # ),
-    # LearnerConfig(
-    #     name="MAGIC_Net",
-    #     model=CFG.create_magic_net,
-    #     numeric=True,
-    #     batch_learner=False,
-    #     drift=True,
-    #     cpnn=False,
-    #     magic=True,
-    # ),
-    # LearnerConfig(
-    #     name="MAGIC_Net_sh",
-    #     model=CFG.create_magic_net_single_head,
-    #     numeric=True,
-    #     batch_learner=False,
-    #     drift=True,
-    #     cpnn=False,
-    #     magic=True,
-    # ),
-    # LearnerConfig(
-    #     name="MAGIC_Net_binary_sh",
-    #     model=CFG.create_magic_net_binary,
-    #     numeric=True,
-    #     batch_learner=False,
-    #     drift=True,
-    #     cpnn=False,
-    #     magic=True,
-    # ),
-    # LearnerConfig(
-    #     name="MAGIC_Net_binary_mh",
-    #     model=CFG.create_magic_net_binary_mh,
-    #     numeric=True,
-    #     batch_learner=False,
-    #     drift=True,
-    #     cpnn=False,
-    #     magic=True,
-    # ),
-    # LearnerConfig(
-    #     name="DyncPNN",
-    #     model=lambda: DynamicCPNN(
-    #         [CFG.base_learner.get_base_learner()],
-    #     ),
-    #     numeric=True,
-    #     batch_learner=False,
-    #     drift=True,
-    #     cpnn=True,
-    #     dyn_cpnn=True,
-    # ),
-]
+RNN_LEARNERS = ["MAGIC_Net", "MultiHeadCRNN", "DYNcPNN"]
+# Other available names: cRNN, cPNN, MAGIC_Net_sh,
+# MAGIC_Net_binary_sh, MAGIC_Net_binary_mh.
+STREAM_LEARNERS = []
+# Optional architecture-independent methods, created once: ARF, ARF_TA, HAT, HAT_TA.
 
 # __________________
 # CODE
 # __________________
-PREC_REC_SFX = ""
-if (
-    USE_DETECTOR
-    and DETECTOR_SIMULATOR_PRECISION is not None
-    and DETECTOR_SIMULATOR_RECALL is not None
-):
-    PREC_REC_SFX = (
-        f"_{int(DETECTOR_SIMULATOR_PRECISION * 100)}prec_"
-        f"{int(DETECTOR_SIMULATOR_RECALL * 100)}rec"
-    )
+def main():
+    CFG = Config(base_rnn=BASE_RNN)
+    learners = CFG.create_learners(RNN_LEARNERS, STREAM_LEARNERS)
+    for name, values in (
+        ("HIDDEN_SIZE_PARAM", HIDDEN_SIZE_PARAM),
+        ("HIDDEN_MULT", HIDDEN_MULT),
+        ("ENSEMBLE_BATCHES", ENSEMBLE_BATCHES),
+        ("ENSEMBLE_TH", ENSEMBLE_TH),
+    ):
+        if not isinstance(values, dict):
+            raise ValueError(f"{name} must be a dictionary keyed by RNN")
+        missing = set(CFG.base_rnn) - values.keys()
+        if missing:
+            raise ValueError(f"Missing {name} for: {', '.join(sorted(missing))}")
+    path_performance = PATH_PERFORMANCE
+    path_base_learner = PATH_BASE_LEARNER
+    path_load_detections = PATH_LOAD_DETECTIONS
+    output_file = OUTPUT_FILE
+    callback_func = CALLBACK_FUNC
 
-METRICS = ["accuracy", "kappa"]
-if OUTPUT_FILE is None:
-    OUTPUT_FILE = PATHS[0].split("/")[-1]
+    PREC_REC_SFX = ""
     if (
         USE_DETECTOR
         and DETECTOR_SIMULATOR_PRECISION is not None
         and DETECTOR_SIMULATOR_RECALL is not None
     ):
-        OUTPUT_FILE = (
-            f"{OUTPUT_FILE}_"
-            f"{int(DETECTOR_SIMULATOR_PRECISION*100)}prec_"
-            f"{int(DETECTOR_SIMULATOR_RECALL*100)}rec"
+        PREC_REC_SFX = (
+            f"_{int(DETECTOR_SIMULATOR_PRECISION * 100)}prec_"
+            f"{int(DETECTOR_SIMULATOR_RECALL * 100)}rec"
         )
-eval_cl = None
-if not PATH_PERFORMANCE.startswith("/"):
-    PATH_PERFORMANCE = os.path.join("performance", PATH_PERFORMANCE)
-if not PATH_BASE_LEARNER.startswith("/"):
-    PATH_BASE_LEARNER = os.path.join("base_learner", PATH_BASE_LEARNER)
-make_dir(PATH_BASE_LEARNER)
 
-if MODE == "aws":
-    for p in PATHS:
-        print(p.split("/")[-1])
-orig_stdout = sys.stdout
-f = None
-if MODE == "aws":
-    make_dir(f"outputs")
-    f = open(f"outputs/{OUTPUT_FILE}.txt", "w", buffering=1)
-    sys.stdout = f
-
-try:
-    for path in PATHS:
-        current_path_performance = os.path.join(PATH_PERFORMANCE, path.split("/")[-1])
-        DETECTOR_TYPE = None
-        if USE_DETECTOR:
-            if (
-                DETECTOR_SIMULATOR_PRECISION is not None
-                and DETECTOR_SIMULATOR_RECALL is not None
-            ):
-                current_path_performance = (
-                    f"{current_path_performance}"
-                    f"_{int(DETECTOR_SIMULATOR_PRECISION*100)}prec"
-                    f"_{int(DETECTOR_SIMULATOR_RECALL*100)}rec"
-                )
-                DETECTOR_TYPE = "simulator"
-            else:
-                DETECTOR_TYPE = "sentinel"
-        make_dir(current_path_performance)
-
-        if DO_CL:
-            path_cl = path + "_test"
-            path = path + "_train"
-        else:
-            path_cl = None
-        df = pd.read_csv(f"{path}.csv", nrows=1)
-        dataset = path.split("/")[-1].lower()
-
-        columns = list(df.columns)
-        initial_task = df.iloc[0]["task"]
-        columns.remove("target")
-        columns.remove("task")
-        if "batch" in columns:
-            columns.remove("batch")
-        converters = {c: float for c in columns}
-        converters["target"] = int
-        converters["task"] = int
-        num_features = len(columns)
-        if SEQ_LEN_PARAM is None:
-            seq_len = set_seq_len(dataset)
-        else:
-            seq_len = SEQ_LEN_PARAM
-        if HIDDEN_SIZE_PARAM is None:
-            hidden_size = set_hidden_size(dataset, BASE_RNN)
-        else:
-            hidden_size = HIDDEN_SIZE_PARAM
-        if BATCH_SIZE_PARAM is None:
-            batch_size = set_batch_size(dataset)
-        else:
-            batch_size = BATCH_SIZE_PARAM
-        if NUM_CLASSES is None:
-            output_size = set_output_size(dataset)
-        else:
-            output_size = NUM_CLASSES
-        if DELAY_PARAM is None:
-            delay = set_delay(dataset)
-        else:
-            delay = DELAY_PARAM
-        if HIDDEN_MULT is None:
-            hidden_mult = int(0.5 * hidden_size)
-        else:
-            hidden_mult = HIDDEN_MULT
-        if DETECTOR_TYPE == "sentinel":
-            drift_delay = set_drift_delay(dataset)
-            save_column_freq = set_save_column_freq(dataset)
-        elif DETECTOR_TYPE == "simulator":
-            drift_delay = int(
-                DETECTOR_SIMULATOR_MAX_DELAY + 0.15 * DETECTOR_SIMULATOR_MAX_DELAY
-            )
-            save_column_freq = int(drift_delay / 2)
-        else:
-            drift_delay = None
-            save_column_freq = None
-        old_labels_ta = min(seq_len - 1, MAX_OLD_LABELS)
-        delta = set_adwin_delta(dataset)
-
-        CFG.set_params(
-            ta_order=old_labels_ta,
-            seq_len=seq_len,
-            num_features=num_features,
-            batch_size=batch_size,
-            iterations=ITERATIONS,
-            path=path,
-            converters=converters,
-            delta=delta,
-            output_size=output_size,
-            hidden_size=hidden_size,
-            hidden_mult=hidden_mult,
-            ensemble_batches=ENSEMBLE_BATCHES,
-            ensemble_th=ENSEMBLE_TH,
-            save_column_freq=save_column_freq,
-            drift_delay=drift_delay,
-        )
-        print(path)
-        write = True
-        if UPLOAD_BASE_LEARNER:
-            try:
-                with open(
-                    os.path.join(PATH_BASE_LEARNER, f'{path.split("/")[-1]}.pkl'), "rb"
-                ) as f:
-                    base_learner: cPNN = pickle.load(f)
-                base_learner.set_save_column_freq(
-                    save_column_freq=save_column_freq, drift_delay=drift_delay
-                )
-                CFG.base_learner.set_base_learner(base_learner)
-                write = False
-                print("Base learner loaded.")
-            except:
-                print("Base learner not found.")
-        if write:
-            CFG.base_learner.reset_base_learner()
-            print("Base learner initialized.")
-            if SAVE_BASE_LEARNER:
-                with open(
-                    os.path.join(PATH_BASE_LEARNER, f'{path.split("/")[-1]}.pkl'), "wb"
-                ) as f:
-                    pickle.dump(CFG.base_learner.get_base_learner(), f)
-                print("Base learner stored.")
-        data_stream = CFG.create_iter_csv
-
-        print("BATCH SIZE, SEQ LEN, HIDDEN SIZE:", batch_size, seq_len, hidden_size)
-        print("NUM OLD LABELS:", old_labels_ta)
-        print("ANYTIME LEARNERS:", [m.name for m in learners])
-        print("SUFFIX:", suffix)
-        print("DETECTOR:", USE_DETECTOR)
-        print("DELAY:", delay)
+    METRICS = ["accuracy", "kappa"]
+    if output_file is None:
+        output_file = PATHS[0].split("/")[-1]
         if (
             USE_DETECTOR
             and DETECTOR_SIMULATOR_PRECISION is not None
             and DETECTOR_SIMULATOR_RECALL is not None
         ):
-            print("DETECTOR PRECISION:", DETECTOR_SIMULATOR_PRECISION)
-            print("DETECTOR RECALL:", DETECTOR_SIMULATOR_RECALL)
-        print()
+            output_file = (
+                f"{output_file}_"
+                f"{int(DETECTOR_SIMULATOR_PRECISION*100)}prec_"
+                f"{int(DETECTOR_SIMULATOR_RECALL*100)}rec"
+            )
+    eval_cl = None
+    if not path_performance.startswith("/"):
+        path_performance = os.path.join("performance", path_performance)
+    if not path_base_learner.startswith("/"):
+        path_base_learner = os.path.join("base_learner", path_base_learner)
+    make_dir(path_base_learner)
 
-        if USE_DETECTOR:
-            if LOAD_DETECTIONS:
-                if PATH_LOAD_DETECTIONS is None or PATH_LOAD_DETECTIONS == "":
-                    PATH_LOAD_DETECTIONS = PATH_PERFORMANCE
-                with open(
-                    os.path.join(
-                        PATH_LOAD_DETECTIONS,
-                        f"{dataset.replace('_train','')}{PREC_REC_SFX}",
-                        "drifts.pkl",
-                    ),
-                    "rb",
-                ) as f:
-                    detections = pickle.load(f)[0]
-                drift_detector = DetectorSimulator(detections=detections)
-                print("Detections loaded:", detections)
-            elif (
-                DETECTOR_SIMULATOR_PRECISION is None
-                or DETECTOR_SIMULATOR_RECALL is None
-            ):
-                drift_detector = CFG.create_drift_detector()
+    if MODE == "aws":
+        for p in PATHS:
+            print(p.split("/")[-1])
+    orig_stdout = sys.stdout
+    log_file = None
+    if MODE == "aws":
+        make_dir(f"outputs")
+        log_file = open(f"outputs/{output_file}.txt", "w", buffering=1)
+        sys.stdout = log_file
+
+    try:
+        for path in PATHS:
+            current_path_performance = os.path.join(path_performance, path.split("/")[-1])
+            DETECTOR_TYPE = None
+            if USE_DETECTOR:
+                if (
+                    DETECTOR_SIMULATOR_PRECISION is not None
+                    and DETECTOR_SIMULATOR_RECALL is not None
+                ):
+                    current_path_performance = (
+                        f"{current_path_performance}"
+                        f"_{int(DETECTOR_SIMULATOR_PRECISION*100)}prec"
+                        f"_{int(DETECTOR_SIMULATOR_RECALL*100)}rec"
+                    )
+                    DETECTOR_TYPE = "simulator"
+                else:
+                    DETECTOR_TYPE = "sentinel"
+            make_dir(current_path_performance)
+
+            if DO_CL:
+                path_cl = path + "_test"
+                path = path + "_train"
             else:
-                drift_detector = DetectorSimulator(
-                    recall=DETECTOR_SIMULATOR_RECALL,
-                    precision=DETECTOR_SIMULATOR_PRECISION,
-                    dataset=path,
-                    min_delay=DETECTOR_SIMULATOR_MIN_DELAY,
-                    max_delay=DETECTOR_SIMULATOR_MAX_DELAY,
+                path_cl = None
+            df = pd.read_csv(f"{path}.csv", nrows=1)
+            dataset = path.split("/")[-1].lower()
+
+            columns = list(df.columns)
+            initial_task = df.iloc[0]["task"]
+            columns.remove("target")
+            columns.remove("task")
+            if "batch" in columns:
+                columns.remove("batch")
+            converters = {c: float for c in columns}
+            converters["target"] = int
+            converters["task"] = int
+            num_features = len(columns)
+            if SEQ_LEN_PARAM is None:
+                seq_len = set_seq_len(dataset)
+            else:
+                seq_len = SEQ_LEN_PARAM
+            hidden_size = {
+                rnn: set_hidden_size(dataset, rnn)
+                if HIDDEN_SIZE_PARAM[rnn] is None else HIDDEN_SIZE_PARAM[rnn]
+                for rnn in CFG.base_rnn
+            }
+            if BATCH_SIZE_PARAM is None:
+                batch_size = set_batch_size(dataset)
+            else:
+                batch_size = BATCH_SIZE_PARAM
+            if NUM_CLASSES is None:
+                output_size = set_output_size(dataset)
+            else:
+                output_size = NUM_CLASSES
+            if DELAY_PARAM is None:
+                delay = set_delay(dataset)
+            else:
+                delay = DELAY_PARAM
+            hidden_mult = {
+                rnn: int(0.5 * hidden_size[rnn])
+                if HIDDEN_MULT[rnn] is None else HIDDEN_MULT[rnn]
+                for rnn in CFG.base_rnn
+            }
+            if DETECTOR_TYPE == "sentinel":
+                drift_delay = set_drift_delay(dataset)
+                save_column_freq = set_save_column_freq(dataset)
+            elif DETECTOR_TYPE == "simulator":
+                drift_delay = int(
+                    DETECTOR_SIMULATOR_MAX_DELAY + 0.15 * DETECTOR_SIMULATOR_MAX_DELAY
                 )
-        else:
-            drift_detector = None
+                save_column_freq = int(drift_delay / 2)
+            else:
+                drift_delay = None
+                save_column_freq = None
+            old_labels_ta = min(seq_len - 1, MAX_OLD_LABELS)
+            delta = set_adwin_delta(dataset)
 
-        eval_preq = EvaluatePrequential(
-            batch_size=batch_size,
-            metrics=METRICS,
-            learners=learners,
-            data_stream=data_stream,
-            path_write=current_path_performance,
-            suffix=suffix,
-            write_checkpoints=WRITE_CHECKPOINTS,
-            iterations=ITERATIONS,
-            dataset_name=dataset,
-            mode=MODE,
-            drift_detector=drift_detector,
-            preprocessing_func=None if PREPROCESS is None else PREPROCESS.preprocess,
-            delay=delay,
-            iteration_str=PREC_REC_SFX + suffix,
-        )
+            CFG.set_params(
+                ta_order=old_labels_ta,
+                seq_len=seq_len,
+                num_features=num_features,
+                batch_size=batch_size,
+                iterations=ITERATIONS,
+                path=path,
+                converters=converters,
+                delta=delta,
+                output_size=output_size,
+                hidden_size=hidden_size,
+                hidden_mult=hidden_mult,
+                ensemble_batches=ENSEMBLE_BATCHES,
+                ensemble_th=ENSEMBLE_TH,
+                save_column_freq=save_column_freq,
+                drift_delay=drift_delay,
+            )
+            print(path)
+            CFG.prepare_base_learners(
+                path_base_learner, path.split("/")[-1],
+                load=UPLOAD_BASE_LEARNER, save=SAVE_BASE_LEARNER,
+            )
+            data_stream = CFG.create_iter_csv
 
-        if path_cl is not None and DO_CL:
-            eval_cl = EvaluateContinualLearning(
-                path=path_cl,
-                checkpoint=eval_preq.checkpoint,
-                learners_config=learners,
+            print("BATCH SIZE, SEQ LEN:", batch_size, seq_len)
+            print("HIDDEN SIZE PER RNN:", hidden_size)
+            print("NUM OLD LABELS:", old_labels_ta)
+            print("ANYTIME LEARNERS:", [m.name for m in learners])
+            print("SUFFIX:", suffix)
+            print("DETECTOR:", USE_DETECTOR)
+            print("DELAY:", delay)
+            if (
+                USE_DETECTOR
+                and DETECTOR_SIMULATOR_PRECISION is not None
+                and DETECTOR_SIMULATOR_RECALL is not None
+            ):
+                print("DETECTOR PRECISION:", DETECTOR_SIMULATOR_PRECISION)
+                print("DETECTOR RECALL:", DETECTOR_SIMULATOR_RECALL)
+            print()
+
+            if USE_DETECTOR:
+                if LOAD_DETECTIONS:
+                    if path_load_detections is None or path_load_detections == "":
+                        path_load_detections = path_performance
+                    with open(
+                        os.path.join(
+                            path_load_detections,
+                            f"{dataset.replace('_train','')}{PREC_REC_SFX}",
+                            "drifts.pkl",
+                        ),
+                        "rb",
+                    ) as f:
+                        detections = pickle.load(f)[0]
+                    drift_detector = DetectorSimulator(detections=detections)
+                    print("Detections loaded:", detections)
+                elif (
+                    DETECTOR_SIMULATOR_PRECISION is None
+                    or DETECTOR_SIMULATOR_RECALL is None
+                ):
+                    drift_detector = CFG.create_drift_detector()
+                else:
+                    drift_detector = DetectorSimulator(
+                        recall=DETECTOR_SIMULATOR_RECALL,
+                        precision=DETECTOR_SIMULATOR_PRECISION,
+                        dataset=path,
+                        min_delay=DETECTOR_SIMULATOR_MIN_DELAY,
+                        max_delay=DETECTOR_SIMULATOR_MAX_DELAY,
+                    )
+            else:
+                drift_detector = None
+
+            eval_preq = EvaluatePrequential(
+                batch_size=batch_size,
+                metrics=METRICS,
+                learners=learners,
+                data_stream=data_stream,
                 path_write=current_path_performance,
                 suffix=suffix,
-                print_suffix=PREC_REC_SFX + suffix,
-                batch_size=batch_size,
-                seq_len=seq_len,
+                write_checkpoints=WRITE_CHECKPOINTS,
+                iterations=ITERATIONS,
+                dataset_name=dataset,
                 mode=MODE,
+                drift_detector=drift_detector,
+                preprocessing_func=None if PREPROCESS is None else PREPROCESS.preprocess,
                 delay=delay,
+                iteration_str=PREC_REC_SFX + suffix,
             )
-            CALLBACK_FUNC = eval_cl.evaluate
 
-        CFG.initialize_callback(eval_cl, eval_preq)
+            if path_cl is not None and DO_CL:
+                eval_cl = EvaluateContinualLearning(
+                    path=path_cl,
+                    checkpoint=eval_preq.checkpoint,
+                    learners_config=learners,
+                    path_write=current_path_performance,
+                    suffix=suffix,
+                    print_suffix=PREC_REC_SFX + suffix,
+                    batch_size=batch_size,
+                    seq_len=seq_len,
+                    mode=MODE,
+                    delay=delay,
+                )
+                callback_func = eval_cl.evaluate
 
-        eval_preq.evaluate(callback=CALLBACK_FUNC, initial_task=initial_task)
+            CFG.initialize_callback(eval_cl, eval_preq)
 
-        if PREPROCESS is not None:
-            PREPROCESS.reset()
-        print()
-except Exception:
-    print(traceback.format_exc())
-    if MODE == "aws":
-        sys.stdout = orig_stdout
-        f.close()
+            eval_preq.evaluate(callback=callback_func, initial_task=initial_task)
+
+            if PREPROCESS is not None:
+                PREPROCESS.reset()
+            print()
+    except Exception:
         print(traceback.format_exc())
-print("\n\nEND.")
-if MODE == "aws":
-    sys.stdout = orig_stdout
-    f.close()
+        raise
+    finally:
+        if MODE == "aws":
+            sys.stdout = orig_stdout
+            log_file.close()
+    print("\n\nEND.")
+
+
+if __name__ == "__main__":
+    main()

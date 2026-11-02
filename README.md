@@ -36,8 +36,10 @@ Each file's name has the following structure: **\<data_source\>\_\<id_configurat
 - **`models/magic/`**: It contains the Python modules implementing MAGIC Net.
   * **`models/magic/magic_net.py`**: The `MagicNet` class implements MAGIC Net's architecture.
   * **`models/magic/manager.py`**: The `MagicManager` class implements the manager of MAGIC Net's masks and models.
+  * **`models/magic/piggyback_rnn.py`**: `PiggyBackRNN` provides the shared recurrent masking, heads and expansion lifecycle.
   * **`models/magic/piggyback_cgru.py`**: The `PiggyBackGRU` class implements the GRU model with masks.
-  * **`models/magic/piggyback_layers.py`**: The different classes apply masks to the GRU model's layers.
+  * **`models/magic/piggyback_clstm.py`**: `PiggyBackLSTM` implements the masked LSTM. GRU and LSTM both inherit directly from `PiggyBackRNN`.
+  * **`models/magic/piggyback_layers.py`**: The recurrent and linear layers apply the weight masks.
   * **`models/magic/activations.py`**: It contains custom activation and thresholding functions (e.g., `CappedSigmoid`, `Binarizer`, `Ternarizer`) used to modulate the continuous masks.
   * **`models/magic/cgru_from_masks.py`**: The `cGRUFromMasks` class reconstructs a static, standard GRU model by applying the learned masks to the frozen base weights.
   * **`models/magic/inference_magic.py`**: The `InferenceMagicNet` class implements a wrapper to perform continual inference by dynamically evaluating the ensemble of historical masks.
@@ -88,6 +90,32 @@ comparison or have no prediction during sequence warm-up are not scored.
 The grace period counts labeled data points once, independently of mini-batch
 training, starting after the point that completes the drift decision.
 
+MAGIC supports both GRU and LSTM backbones with the same masking and drift
+lifecycle. Existing experiment factories automatically select the architecture
+of the shared base learner (selected through the `BASE_RNN` list). Passing a cPNN or
+its `cGRULinear` / `cLSTMLinear` column to `base_learner_weights` reuses its weights,
+biases, initial head and dimensions through independent copies. Without a base
+learner, GRU remains the default; select LSTM explicitly with
+`model_class=PiggyBackLSTM` from `models.magic.piggyback_clstm`.
+
+LSTM expansion and historical masks preserve all four gate blocks and reset
+both hidden and cell initial states to the new size. Single-head, multi-head,
+sigmoid/binary masks, Mask-Last, conditional old-model retention and CL checkpoint
+handling share the same implementation across the two architectures. Existing
+GRU class paths remain available for loading previous pickle checkpoints.
+`PiggyBackGRU` and `PiggyBackLSTM` are sibling subclasses of `PiggyBackRNN`;
+all common model behavior lives in that base class.
+The masked layers follow the same structure: `ElementWiseGRU` and
+`ElementWiseLSTM` both extend `ElementWiseRNN`. The concrete layers define gate
+order/count, initial states and recurrent computation: GRU uses reset/update/new
+gates and a hidden state; LSTM uses input/forget/cell/output gates and hidden plus
+cell states. Mask application, freezing and expansion remain shared and use the
+declared gate count when copying parameter blocks. Historical mask padding uses
+the same metadata. Generic APIs use `base_learner_weights`,
+`recurrent_mask_weights` and `linear_mask_weights`; old attribute names are
+migrated only when loading previous checkpoints. Legacy GRU constructor aliases
+are confined to the GRU subclasses.
+
 Sigmoid weight masks always use `CappedSigmoid`; the `cap_sigmoid` option has
 been removed from constructors and experiment factories. Historical masks are
 padded with effective zeros. Their reconstruction preserves exact zero and one,
@@ -117,23 +145,59 @@ without training data in its window; repeated resets leave the source checkpoint
 intact. During the first `seq_len - 1` points, the underlying models return
 `None`, which the inference wrapper continues to represent as class zero.
 
-### Head-only ablation (no weight masks)
+### Comparing multiple recurrent backbones
 
-Add this entry to the experiment's `learners` list:
+In `evaluation/test.py`, choose the architectures and their settings independently:
 
 ```python
+BASE_RNN = ["gru", "lstm"]
+HIDDEN_SIZE_PARAM = {"gru": None, "lstm": None}
+HIDDEN_MULT = {"gru": None, "lstm": None}
+ENSEMBLE_BATCHES = {"gru": 30, "lstm": 30}
+ENSEMBLE_TH = {"gru": 1.05, "lstm": 1.05}
+RNN_LEARNERS = ["MAGIC_Net", "MultiHeadCRNN", "DYNcPNN"]
+STREAM_LEARNERS = []  # Optional ARF, ARF_TA, HAT, HAT_TA; included once.
+```
+
+`None` selects the dataset/architecture default. Sequence length, batch size,
+preprocessing, label delay and detector remain common. All selected methods run
+in one prequential/CL evaluation, with names such as `MAGIC_Net_gru` and
+`MAGIC_Net_lstm`, receiving the same stream and detections.
+
+`Config(base_rnn=BASE_RNN)` stores `hidden_size`, `hidden_mult`,
+`ensemble_batches`, `ensemble_th` and `base_learner` by RNN key. Factories accept
+`rnn="gru"` or `rnn="lstm"`; omitting it is supported only for a single-RNN
+configuration. `create_learners()` binds each factory explicitly to its RNN.
+Base learners are initialized lazily after dataset parameters are resolved.
+Within an architecture, every method receives independent copies of the same
+initialization. Changing only ensemble settings preserves that initialization.
+
+Archives are stored in `<PATH_BASE_LEARNER>/gru/<dataset>.pkl` and
+`<PATH_BASE_LEARNER>/lstm/<dataset>.pkl`. Loading validates architecture, hidden
+size, feature count, output classes, sequence length and batch size. A compatible
+legacy flat archive is reused only for its own architecture and may be copied
+into the corresponding subdirectory. Incompatible typed archives raise an error
+instead of being silently replaced.
+
+### Head-only ablation (no weight masks)
+
+Include `"MultiHeadCRNN"` in `RNN_LEARNERS` to compare the ablation for every
+selected architecture. For direct construction of a single entry:
+
+```python
+from functools import partial
+
 LearnerConfig(
-    name="MAGIC_Net_head_only",
-    model=CFG.create_multihead_crnn,
-    numeric=True,
+    name="MultiHeadCRNN_lstm",
+    model=partial(CFG.create_multihead_crnn, rnn="lstm"),
     drift=True,
     magic=True,
 )
 ```
 
 The factory reuses the initialized base learner shared by the other methods,
-including its recurrent weights and initial linear head. Both `BASE_RNN = "gru"`
-and `BASE_RNN = "lstm"` are supported through `cGRULinear` and `cLSTMLinear`.
+including its recurrent weights and initial linear head. Both GRU and LSTM
+entries in `BASE_RNN` are supported through `cGRULinear` and `cLSTMLinear`.
 
 At every drift, `Ignore` continues training the current model, while `Expand`
 retrieves the pre-drift checkpoint, freezes its backbone and trains a new head.

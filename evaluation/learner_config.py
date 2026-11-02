@@ -13,7 +13,6 @@ class LearnerConfig:
         numeric: bool = None,
         drift: bool = None,
         cpnn: bool = False,
-        smart: bool = False,
         dyn_cpnn: bool = False,
         temp_dep: bool = True,
         magic: bool = False,
@@ -35,8 +34,6 @@ class LearnerConfig:
             If None is set to True in case of cpnn or batch_learner.
         cpnn: bool, default: False.
             True if the model is a cPNN based model, False otherwise.
-        smart: bool, default: False.
-            True if the model is a Smart cPNN. False otherwise.
         dyn_cpnn: bool, default: False.
             True if the model is a Dynamic cPNN. False otherwise.
         temp_dep: bool, default: True.
@@ -49,7 +46,6 @@ class LearnerConfig:
         self.cpnn = cpnn
         self.drift = drift
         self.numeric = numeric
-        self.smart = smart
         self.dyn_cpnn = dyn_cpnn
         self.temp_dep = temp_dep
         self.magic = magic

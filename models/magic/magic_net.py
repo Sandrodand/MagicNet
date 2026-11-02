@@ -11,7 +11,7 @@ class MagicNet:
 
     def __init__(
         self,
-        model_class=PiggyBackGRU,
+        model_class=None,
         device=None,
         lr: float = 0.01,
         seq_len: int = 5,
@@ -41,8 +41,9 @@ class MagicNet:
         Parameters
         ----------
 
-        model_class: default: PiggyBackGRU.
-            The type of cRNN used.
+        model_class: default: None.
+            Masked recurrent architecture. Inferred from the base learner, or GRU
+            when no base learner is supplied. Accepts PiggyBackGRU/PiggyBackLSTM.
         device: default: None.
             Torch's device, if None its value is set to 'cpu'.
         lr: float, default: 0.01.
@@ -63,12 +64,12 @@ class MagicNet:
         threshold_fn: str, default: "sigmoid".
             The function to transform the real-weighted masks before applying them on the weights.
             Functions can be "binarizer", "ternarizer, "sigmoid", "tanh".
-        hidden_size: int, default: 50.
+        hidden_size: int, default: 25.
             The starting hidden size of the model's cRNN.
-        hidden_mult: int, default: 50.
-            The factor for the model expansion. Every expansion will add a hidden_mult amount to the current hidden size
-            of the model.
-        ensemble_batches: int, default: 50.
+        hidden_mult: int, default: None.
+            Number of neurons added during expansion. None uses half the actual
+            backbone hidden size, including when loaded from a shared base learner.
+        ensemble_batches: int, default: 30.
             The number of batches used to train the model after a drift before choosing which option in the ensemble
             to keep.
         ensemble_th: float, default: 1.05.
@@ -94,13 +95,12 @@ class MagicNet:
             raise TypeError(
                 "initial_task_id is no longer configurable; the first task is 1"
             )
+        if "stride" in kwargs:
+            raise TypeError("stride is no longer configurable; it is always 1")
         if seq_len < 2:
             raise ValueError("seq_len must be greater than 1")
 
         self.multihead = multi_head
-        if hidden_mult is None:
-            hidden_mult = int(0.5 * hidden_size)
-
         self.columns_args = kwargs
         if device is None:
             device = "cpu"

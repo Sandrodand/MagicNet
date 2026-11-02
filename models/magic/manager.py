@@ -5,6 +5,8 @@ from evaluation.evaluation_utils import compute_model_size
 from models.magic.piggyback_cgru import (
     PiggyBackGRU,
 )
+from models.magic.piggyback_clstm import PiggyBackLSTM
+from models.magic.piggyback_rnn import PiggyBackRNN
 from models.utils_scl.utils import *
 
 
@@ -16,7 +18,7 @@ class MagicManager(object):
 
     def __init__(
         self,
-        model_class=PiggyBackGRU,
+        model_class=None,
         device=None,
         ensemble_batches=30,
         lr=0.01,
@@ -43,8 +45,8 @@ class MagicManager(object):
         """
         Parameters
         ----------
-        model_class : class, default: PiggyBackGRU
-            The network architecture class to instantiate.
+        model_class : class, default: None
+            Architecture inferred from the base learner, defaulting to PiggyBackGRU.
         device : str, default: None
             The processing device ('cpu' or 'cuda').
         ensemble_batches : int, default: 30
@@ -146,18 +148,29 @@ class MagicManager(object):
         self.in_grace_period = grace_period is not None and grace_period > 0
         self.grace_period_counter = 0
 
-        if model_class == PiggyBackGRU:
-            self.model = PiggyBackGRU(
-                input_size=self.input_size,
-                device=self.device,
-                hidden_size=hidden_size,
-                output_size=self.output_size,
-                threshold_fn=threshold_fn,
-                seq_len=seq_len,
-                cGRU_weights=base_learner_weights,
-                multi_head=multi_head,
-            )
-            self.model.train()
+        if model_class is None:
+            source = base_learner_weights
+            if source is not None and hasattr(source, "columns"):
+                source = source.columns.columns[0]
+            model_class = PiggyBackLSTM if hasattr(source, "lstm") else PiggyBackGRU
+        if not isinstance(model_class, type) or not issubclass(model_class, PiggyBackRNN):
+            raise TypeError("model_class must derive from PiggyBackRNN")
+        self.model_class = model_class
+        self.model = model_class(
+            input_size=self.input_size,
+            device=self.device,
+            hidden_size=hidden_size,
+            output_size=self.output_size,
+            threshold_fn=threshold_fn,
+            seq_len=seq_len,
+            base_learner_weights=base_learner_weights,
+            multi_head=multi_head,
+        )
+        self.input_size = self.model.input_size
+        self.output_size = self.model.output_size
+        if self.hidden_mult is None:
+            self.hidden_mult = int(0.5 * self.model.hidden_size)
+        self.model.train()
 
         # Freeze the piggymasks for the first task since we learn all weights.
         for name, param in self.model.named_parameters():
