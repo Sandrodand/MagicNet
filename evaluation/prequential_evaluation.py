@@ -11,7 +11,6 @@ from detectors.detector_simulator import DetectorSimulator
 from detectors.sentinel import Sentinel
 from evaluation.buffer import Buffer
 from evaluation.learner_config import LearnerConfig
-from models.magic.magic_net import MagicNet
 
 
 def make_dir(path):
@@ -410,6 +409,9 @@ class EvaluatePrequential:
         if iteration_str is not None:
             self.iteration_str = iteration_str
         for iteration in range(self._iterations):
+            self.buffer_x = Buffer(self.delay)
+            self.buffer_x_preproc = Buffer(self.delay)
+            self.buffer_y = Buffer(self.delay)
             with open(os.path.join(self.path_write, "time.txt"), "a") as f:
                 f.write(
                     f"START {iteration}/{self._iterations}: {datetime.datetime.now().strftime('%Y/%m/%d, %H:%M:%S')}\n"
@@ -512,13 +514,6 @@ class EvaluatePrequential:
             for model in self.learners:
                 model_name = model.name + "_anytime"
                 learner = self._eval[model_name]["alg"][iteration]
-                if model.magic:
-                    magic_model: MagicNet = learner
-                    magic_model.manager.store_masks_biases()
-                    if magic_model.manager.in_expansion:
-                        magic_model.manager.force_decision()
-                    magic_model.manager.grace_period = False
-                    magic_model.manager.in_expansion = False
                 checkpoint = (
                     learner.get_cl_checkpoint()
                     if model.dyn_cpnn
@@ -526,7 +521,7 @@ class EvaluatePrequential:
                 )
                 self.checkpoint[model_name][iteration].append(checkpoint)
 
-            self._write_pickles(self._iterations - 1, write_checkpoints=True)
+            self._write_pickles(iteration, write_checkpoints=True)
 
             if callback is not None:
                 callback(

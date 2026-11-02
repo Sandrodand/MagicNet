@@ -450,9 +450,10 @@ class MagicManager(object):
         for name, item in self.current_perf.items():
             self._print(name, " performance: ", item)
 
-        non_expand_options = ["PiggyMask"]
+        non_expand_options = []
         if self.ignore_option:
             non_expand_options.append("Ignore")
+        non_expand_options.append("PiggyMask")
         if self.previous_piggy:
             non_expand_options.append("PiggyMask_last")
         bestpiggy = max(non_expand_options, key=lambda k: self.current_perf[k].get())
