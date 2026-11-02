@@ -28,7 +28,7 @@ class MagicManager(object):
         threshold_fn="sigmoid",
         hidden_size=None,
         hidden_mult=None,
-        ensemble_th=None,
+        ensemble_th=1.05,
         base_learner_weights=None,
         output_size=2,
         multi_head=True,
@@ -37,6 +37,8 @@ class MagicManager(object):
         checkpoint_freq=None,
         drift_delay=None,
         grace_period=None,
+        data_points_previous_concept=1000,
+        minimum_k_difference=0.04,
     ):
         """
         Parameters
@@ -66,7 +68,7 @@ class MagicManager(object):
             Number of hidden units in the recurrent layer.
         hidden_mult : int, default: None
             Number of units to add during architectural expansion (accommodation).
-        ensemble_th : float, default: None
+        ensemble_th : float, default: 1.05
             Performance threshold multiplier; expansion is chosen if its performance
             is greater than mask-only performance multiplied by this factor.
         base_learner_weights : dict, default: None
@@ -85,6 +87,10 @@ class MagicManager(object):
             Maximum expected delay of the drift detector, used for checkpoint retrieval.
         grace_period : int, default: None
             Number of data points to ignore new drift alarms after an adaptation.
+        data_points_previous_concept : int, default: 1000
+            Maximum number of labeled samples used to check forgetting after Ignore.
+        minimum_k_difference : float, default: 0.04
+            Minimum additive Kappa advantage for retaining the pre-drift model.
         """
         self.device = device
         self.model_class = model_class
@@ -133,6 +139,9 @@ class MagicManager(object):
         self.pending_predictions = {}
         self.previous_model_state = None
         self.forgotten_models = {}
+        self._initialize_concept_memory(
+            data_points_previous_concept, minimum_k_difference
+        )
         self.only_ignore = False
         self.in_grace_period = grace_period is not None and grace_period > 0
         self.grace_period_counter = 0
@@ -166,6 +175,80 @@ class MagicManager(object):
         if self.grace_period is None or self.grace_period <= 0:
             self.in_grace_period = False
         self.__dict__.setdefault("grace_period_counter", 0)
+        self.__dict__.setdefault("data_points_previous_concept", 1000)
+        self.__dict__.setdefault("minimum_k_difference", 0.04)
+        self.__dict__.setdefault("concept_x", {"old": [], "new": []})
+        self.__dict__.setdefault("concept_y", {"old": [], "new": []})
+        self.__dict__.setdefault("historical_heads", {})
+
+    def _initialize_concept_memory(
+        self, data_points_previous_concept, minimum_k_difference
+    ):
+        self.data_points_previous_concept = data_points_previous_concept
+        self.minimum_k_difference = minimum_k_difference
+        self.concept_x = {"old": [], "new": []}
+        self.concept_y = {"old": [], "new": []}
+        self.historical_heads = {}
+
+    def collect_concept_sample(self, x, y):
+        if len(self.concept_x["new"]) < self.data_points_previous_concept:
+            self.concept_x["new"].append(np.asarray(x).copy())
+            self.concept_y["new"].append(int(y))
+
+    def _start_concept_sample(self):
+        self.concept_x["old"] = self.concept_x["new"]
+        self.concept_y["old"] = self.concept_y["new"]
+        self.concept_x["new"] = []
+        self.concept_y["new"] = []
+        if self.multi_head:
+            task_id = self.curr_task_idx - 1
+            self.historical_heads[task_id] = pickle.loads(
+                pickle.dumps(self.previous_model_state.heads[str(task_id)])
+            )
+
+    def _score_concept_model(self, model, task_id):
+        # Only copies are evaluated: neither temporal state nor optimizer of the
+        # online model participates in this forgetting check.
+        model = pickle.loads(pickle.dumps(model))
+        model.eval()
+        score = metrics.CohenKappa()
+        sample = np.asarray(self.concept_x["old"], dtype=np.float32)
+        with torch.no_grad():
+            for i, y in enumerate(self.concept_y["old"]):
+                pred = 0
+                if i >= self.seq_len - 1:
+                    sequence = torch.as_tensor(
+                        sample[i - self.seq_len + 1 : i + 1],
+                        device=self.device,
+                    ).unsqueeze(0)
+                    outputs = model(sequence, task_id=task_id)
+                    pred = int(get_pred_from_outputs(outputs)[0][-1].item())
+                score.update(y, pred)
+        return score.get()
+
+    def _maybe_archive_previous_model(self, current_model):
+        old_k = self._score_concept_model(
+            self.previous_model_state, self.curr_task_idx - 1
+        )
+        current_k = self._score_concept_model(current_model, self.curr_task_idx)
+        improvement = old_k - current_k
+        retain = improvement > 0 and improvement >= self.minimum_k_difference
+        if retain:
+            self.forgotten_models[self.curr_task_idx - 1] = pickle.loads(
+                pickle.dumps(self.previous_model_state)
+            )
+        return {
+            "old_model": retain,
+            "old_model_k": old_k,
+            "current_model_k": current_k,
+            "previous_concept_sample_size": len(self.concept_y["old"]),
+        }
+
+    def restore_historical_head(self, task_id):
+        if self.multi_head and task_id in self.historical_heads:
+            self.model.heads[str(task_id)] = pickle.loads(
+                pickle.dumps(self.historical_heads[task_id])
+            ).to(self.device)
 
     def _create_optimizer(self, model):
         return torch.optim.Adam(model.parameters(), lr=self.lr)
@@ -246,6 +329,7 @@ class MagicManager(object):
         self.checkpoints = []
         self.previous_model_state = pickle.loads(pickle.dumps(backbone_model))
         self.curr_task_idx = task_id
+        self._start_concept_sample()
 
         # Freeze the past
         freeze_all_masks = pickle.loads(pickle.dumps(self.mask_list[task_id - 1]))
@@ -361,6 +445,7 @@ class MagicManager(object):
         else:
             best_model = bestpiggy
 
+        retention = {}
         if best_model != "Ignore":
             self.previous_piggy = True
             self.in_grace_period = (
@@ -368,9 +453,7 @@ class MagicManager(object):
             )
             self.grace_period_counter = 0
         else:
-            self.forgotten_models[self.curr_task_idx - 1] = pickle.loads(
-                pickle.dumps(self.previous_model_state)
-            )
+            retention = self._maybe_archive_previous_model(self.ensemble[best_model])
 
         self.ensemble_choices.append(
             {
@@ -382,6 +465,7 @@ class MagicManager(object):
                     k: self.current_perf[k].get() for k in self.current_perf
                 },
                 "chosen_model_size": compute_model_size(self.ensemble[best_model]),
+                **retention,
             }
         )
         self.ensemble_choices = sorted(
@@ -394,6 +478,9 @@ class MagicManager(object):
             pickle.dumps(self.ensemble_masks[best_model])
         )
         self.in_expansion = False
+        self.concept_x["old"] = []
+        self.concept_y["old"] = []
+        self.previous_model_state = None
         if self.checkpoint_freq is not None:
             self.save_checkpoint()
         self.ensemble = {}

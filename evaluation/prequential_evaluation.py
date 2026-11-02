@@ -195,9 +195,9 @@ class EvaluatePrequential:
             model_name = model.name + "_anytime"
             for metric in self.metrics:
                 for period in ["task"] + self.rolling_metrics:
-                    self._eval[model_name]["metrics"][period][metric][iteration] = (
-                        self._get_metric(metric, period)
-                    )
+                    self._eval[model_name]["metrics"][period][metric][
+                        iteration
+                    ] = self._get_metric(metric, period)
             self._perf[model_name]["drifts"][iteration].append(idx)
             learner = self._eval[model_name]["alg"][iteration]
             checkpoint = (
@@ -219,7 +219,9 @@ class EvaluatePrequential:
                 learner = self._eval[model_name]["alg"][iteration]
                 learner.add_new_column()
                 if model.cpnn or model.magic:
-                    self._perf[model_name]["memory"][iteration].append(learner.get_size())
+                    self._perf[model_name]["memory"][iteration].append(
+                        learner.get_size()
+                    )
 
     def _predict(self, x, x_preproc, y, iteration, idx):
         for model in self.learners:
@@ -276,9 +278,9 @@ class EvaluatePrequential:
                         "wb",
                     ) as f:
                         pickle.dump(
-                            self._eval[self.learners[i].name + "_anytime"][
-                                "alg"
-                            ][iteration].manager.ensemble_choices,
+                            self._eval[self.learners[i].name + "_anytime"]["alg"][
+                                iteration
+                            ].manager.ensemble_choices,
                             f,
                         )
                     with open(
@@ -288,9 +290,9 @@ class EvaluatePrequential:
                         "wb",
                     ) as f:
                         pickle.dump(
-                            self._eval[self.learners[i].name + "_anytime"][
-                                "alg"
-                            ][iteration].manager.ensemble_perf,
+                            self._eval[self.learners[i].name + "_anytime"]["alg"][
+                                iteration
+                            ].manager.ensemble_perf,
                             f,
                         )
                 if m.dyn_cpnn:
@@ -301,9 +303,9 @@ class EvaluatePrequential:
                         "wb",
                     ) as f:
                         pickle.dump(
-                            self._eval[self.learners[i].name + "_anytime"][
-                                "alg"
-                            ][iteration].choices,
+                            self._eval[self.learners[i].name + "_anytime"]["alg"][
+                                iteration
+                            ].choices,
                             f,
                         )
         with open(
@@ -498,9 +500,7 @@ class EvaluatePrequential:
                             self._start_task(iteration, idx)
                         self._apply_drift(iteration, idx)
 
-                self._learn(
-                    x_train, x_train_preproc, y_train, iteration, idx
-                )
+                self._learn(x_train, x_train_preproc, y_train, iteration, idx)
 
                 if self.drift_supervised:
                     self.drift_supervised = False

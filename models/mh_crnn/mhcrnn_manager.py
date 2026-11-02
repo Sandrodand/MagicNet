@@ -25,7 +25,7 @@ class MultiHeadCrnnManager(MagicManager):
         train_epochs=10,
         train_verbose=False,
         hidden_size=50,
-        ensemble_th=1.1,
+        ensemble_th=1.05,
         base_learner_weights=None,
         output_size=2,
         ignore_option=True,
@@ -34,6 +34,8 @@ class MultiHeadCrnnManager(MagicManager):
         drift_delay=3000,
         grace_period=5000,
         multi_head=True,
+        data_points_previous_concept=1000,
+        minimum_k_difference=0.04,
         **kwargs,
     ):
         if not multi_head:
@@ -75,6 +77,9 @@ class MultiHeadCrnnManager(MagicManager):
         self.pending_predictions = {}
         self.previous_model_state = None
         self.forgotten_models = {}
+        self._initialize_concept_memory(
+            data_points_previous_concept, minimum_k_difference
+        )
         self.criterion = torch.nn.CrossEntropyLoss().to(device)
         self.model = MultiHeadCrnnModel(
             model_class=model_class,
@@ -105,6 +110,7 @@ class MultiHeadCrnnManager(MagicManager):
         self.previous_model_state = self.restore_previous_state()
         self.checkpoints = []
         self.curr_task_idx = task_id
+        self._start_concept_sample()
         self.in_expansion = True
         self.ensemble_counter = 0
         self.ensemble_perf.append([])
@@ -142,12 +148,9 @@ class MultiHeadCrnnManager(MagicManager):
         else:
             best_model = "Ignore"
 
+        retention = {}
         if best_model == "Ignore":
-            # A full snapshot is essential while the backbone is still trainable.
-            # Keep MAGIC's task indexing and pool representation after freezing too.
-            self.forgotten_models[self.curr_task_idx - 1] = deepcopy(
-                self.previous_model_state
-            )
+            retention = self._maybe_archive_previous_model(self.ensemble[best_model])
         else:
             self.in_grace_period = (
                 self.grace_period is not None and self.grace_period > 0
@@ -162,6 +165,7 @@ class MultiHeadCrnnManager(MagicManager):
                 "choice": best_model,
                 "final_perf": {k: v.get() for k, v in self.current_perf.items()},
                 "chosen_model_size": compute_model_size(self.ensemble[best_model]),
+                **retention,
             }
         )
         self.ensemble_choices.sort(key=lambda item: item["data_point_counter"])
@@ -169,6 +173,8 @@ class MultiHeadCrnnManager(MagicManager):
         self.model = self.ensemble[best_model]
         self.model_optim = self.ensemble_optims[best_model]
         self.in_expansion = False
+        self.concept_x["old"] = []
+        self.concept_y["old"] = []
         self.save_checkpoint()
         self.ensemble = {}
         self.ensemble_optims = {}

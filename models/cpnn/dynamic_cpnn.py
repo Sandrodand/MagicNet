@@ -254,13 +254,9 @@ class DynamicCPNN:
             # If we accept the drift, we can discard the model that doesn't introduce the new column and
             # substitute it with its copy that adds a new column. This way, when we will remove the last
             # column from all the non-selected models, we will have a column representing the last concept.
-            model_new_column = [m for m in self.ensemble if m.model_type == 0][
-                0
-            ]
+            model_new_column = [m for m in self.ensemble if m.model_type == 0][0]
             model_new_column_idx = [
-                i
-                for i in range(len(self.ensemble))
-                if self.ensemble[i].model_type == 0
+                i for i in range(len(self.ensemble)) if self.ensemble[i].model_type == 0
             ][0]
             self.models[0].model = model_new_column.model
             self.ensemble[0] = ModelEnsemble(
@@ -298,18 +294,14 @@ class DynamicCPNN:
                 # on the previous. To avoid this situation, we compare the performance (on the previous concept)
                 # of the current model and the model stored before the drift. If the latter performs better
                 # we must save it into 'models' in order to not forget the concept.
-                current_model: cPNN = pickle.loads(
-                    pickle.dumps(selected_model.model)
-                )
+                current_model: cPNN = pickle.loads(pickle.dumps(selected_model.model))
                 current_model.reset_previous_data_points()
                 current_k = metrics.CohenKappa()
                 old_model: cPNN = pickle.loads(pickle.dumps(self.old_model))
                 old_model.reset_previous_data_points()
                 old_k = metrics.CohenKappa()
                 for x, y in zip(self.concept_x["old"], self.concept_y["old"]):
-                    old_k = old_k.update(
-                        y, old_model.predict_one(x, timestamp=-1)
-                    )
+                    old_k = old_k.update(y, old_model.predict_one(x, timestamp=-1))
                     current_k = current_k.update(
                         y, current_model.predict_one(x, timestamp=-1)
                     )
@@ -338,9 +330,9 @@ class DynamicCPNN:
             if i != self.selected and self.ensemble[i].model_type != 2:
                 self.ensemble[i].model.remove_last_column()
         self.models[selected_model.model_idx].timestamp = time.time()
-        self.models = sorted(
-            self.models, key=lambda m: m.timestamp, reverse=True
-        )[: self.max_models]
+        self.models = sorted(self.models, key=lambda m: m.timestamp, reverse=True)[
+            : self.max_models
+        ]
         self.ensemble = [selected_model]
         self.metrics = [self.metrics[self.selected]]
         self.choices.append(choice)

@@ -32,7 +32,6 @@ class cPNN:
         device=None,
         lr: float = 0.01,
         seq_len: int = 5,
-        stride: int = 1,
         train_epochs: int = 10,
         anytime_learner: bool = False,
         acpnn: bool = True,
@@ -56,8 +55,6 @@ class cPNN:
         seq_len: int, default: 5.
             The length of the sliding window that builds the single sequences.
             Must be greater than 1.
-        stride: int, default: 1.
-            The sliding window's stride. Only 1 is supported.
         train_epochs: int, default: 10.
             In case of anytime_learner=False, the training epochs to perform in learn_many method.
         anytime_learner: bool, default: False.
@@ -96,8 +93,6 @@ class cPNN:
             raise TypeError("train_verbose is no longer supported by cPNN")
         if seq_len < 2:
             raise ValueError("seq_len must be greater than 1")
-        if stride != 1:
-            raise ValueError("stride must be 1")
         self.anytime_learner = anytime_learner
         if self.anytime_learner:
             self.loss_on_seq = True
@@ -118,7 +113,7 @@ class cPNN:
         self.columns_args["batch_size"] = batch_size
         self.columns = cPNNColumns(**self.columns_args)
         self.seq_len = seq_len
-        self.stride = stride
+        self.stride = 1
         self.train_epochs = train_epochs
         self.columns_perf = [metrics.CohenKappa()]
         self.task_ids = [initial_task_id]
@@ -333,14 +328,16 @@ class cPNN:
             if self.save_column_freq is not None:
                 if self.cont % self.save_column_freq == 0:
                     self.saved_columns.append(
-                        pickle.loads(pickle.dumps(
-                            {
-                                "cont": self.cont,
-                                "batch_cont": self.batch_cont,
-                                "column": self.columns.columns[-1],
-                                "optimizer": self.columns.optimizers[-1],
-                            }
-                        ))
+                        pickle.loads(
+                            pickle.dumps(
+                                {
+                                    "cont": self.cont,
+                                    "batch_cont": self.batch_cont,
+                                    "column": self.columns.columns[-1],
+                                    "optimizer": self.columns.optimizers[-1],
+                                }
+                            )
+                        )
                     )
                     max_keep = int((self.drift_delay / self.save_column_freq) + 2)
                     max_keep = max(4, max_keep)

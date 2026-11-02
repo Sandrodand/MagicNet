@@ -12,6 +12,7 @@ class cGRUFromMasks(nn.Module):
     the product of base weights and specific masks, ensuring no further gradient updates
     occur on these reconstructed parameters.
     """
+
     def __init__(
         self,
         weights,

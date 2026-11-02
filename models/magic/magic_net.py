@@ -15,25 +15,26 @@ class MagicNet:
         device=None,
         lr: float = 0.01,
         seq_len: int = 5,
-        stride: int = 1,
         input_size=4,
         train_epochs: int = 10,
         train_verbose: bool = False,
         batch_size: int = 128,
         reset_data_points: bool = False,
         threshold_fn="sigmoid",
-        hidden_size=50,
-        hidden_mult=50,
-        ensemble_batches=50,
-        ensemble_th=1.1,
+        hidden_size=25,
+        hidden_mult=None,
+        ensemble_batches=30,
+        ensemble_th=1.05,
         base_learner_weights=None,
         multi_head=True,
         ignore_option=True,
         expand_option=True,
-        checkpoint_freq=1500,
-        drift_delay=3000,
+        checkpoint_freq=500,
+        drift_delay=1500,
         grace_period=5000,
         manager_class=MagicManager,
+        data_points_previous_concept=1000,
+        minimum_k_difference=0.04,
         **kwargs,
     ):
         """
@@ -49,8 +50,6 @@ class MagicNet:
         seq_len: int, default: 5.
             The length of the sliding window that builds the single sequences.
             Must be greater than 1.
-        stride: int, default: 1.
-            The sliding window's stride. Only 1 is supported.
         train_epochs: int, default: 10.
             The training epochs to perform in _learn_many method.
         train_verbose: bool, default:False.
@@ -72,10 +71,10 @@ class MagicNet:
         ensemble_batches: int, default: 50.
             The number of batches used to train the model after a drift before choosing which option in the ensemble
             to keep.
-        ensemble_th: float, default: 1.1.
+        ensemble_th: float, default: 1.05.
             The factor by which the expansion options need to outperform the mask only ones in order to be chosen.
             Example: If the mask only option obtains a kappa score of 60%, the expansion one has to obtain
-            at least 66% to be selected.
+            more than 63% to be selected.
         ensemble_mode: str, default: "last".
             This parameter defines how transfer learning is injected in the ensemble. "classic": no transfer learning;
             "last": the ensemble contains two extra options that use the previous piggymasks instead of randomly
@@ -84,6 +83,10 @@ class MagicNet:
             Used to pass pre-initialized weights to the cRNN. If None they are initialized as usual
         manager_class: class, default: MagicManager.
             Lifecycle manager. The head-only ablation supplies its own manager.
+        data_points_previous_concept: int, default: 1000.
+            Maximum number of labeled samples retained for the next forgetting check.
+        minimum_k_difference: float, default: 0.04.
+            Minimum Kappa advantage required to archive the pre-drift model after Ignore.
         kwargs:
             Parameters of column_class.
         """
@@ -93,9 +96,10 @@ class MagicNet:
             )
         if seq_len < 2:
             raise ValueError("seq_len must be greater than 1")
-        if stride != 1:
-            raise ValueError("stride must be 1")
+
         self.multihead = multi_head
+        if hidden_mult is None:
+            hidden_mult = int(0.5 * hidden_size)
 
         self.columns_args = kwargs
         if device is None:
@@ -113,7 +117,7 @@ class MagicNet:
         self.ensemble_th = ensemble_th
 
         self.seq_len = seq_len
-        self.stride = stride
+        self.stride = 1
         self.task_ids = [1]
         self.previous_data_points_anytime_inference = None
         self.previous_data_points_anytime_hidden = None
@@ -146,6 +150,8 @@ class MagicNet:
             checkpoint_freq=checkpoint_freq,
             drift_delay=drift_delay,
             grace_period=grace_period,
+            data_points_previous_concept=data_points_previous_concept,
+            minimum_k_difference=minimum_k_difference,
             **self.columns_args,
         )
 
@@ -245,6 +251,7 @@ class MagicNet:
             call. Use explicit timestamps for delayed labels; -1 supports immediate labels.
         """
 
+        self.manager.collect_concept_sample(x, y)
         self.x_batch.append(x)
         self.y_batch.append(y)
         self.data_point_counter += 1

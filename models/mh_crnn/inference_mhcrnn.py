@@ -20,6 +20,8 @@ class InferenceMultiHeadCRNN(InferenceMagicNet):
             manager = task_model.manager
             if task_id in manager.forgotten_models:
                 manager.model = deepcopy(manager.forgotten_models[task_id])
+            else:
+                manager.restore_historical_head(task_id)
             manager.curr_task_idx = task_id
             manager.model.eval()
             for param in manager.model.parameters():

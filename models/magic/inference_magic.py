@@ -120,6 +120,7 @@ class InferenceMagicNet:
                 )
                 task_model.manager.model.eval()
             else:
+                task_model.manager.restore_historical_head(task_id)
                 task_model.manager.model.eval()
                 if task_id in task_model.manager.piggymask_list:
                     historical_mask = pickle.loads(
@@ -157,7 +158,9 @@ class InferenceMagicNet:
             model.reset_previous_data_points()
         if self.rolling_window is not None:
             self.metrics = [
-                river_utils.Rolling(metrics.CohenKappa(), window_size=self.rolling_window)
+                river_utils.Rolling(
+                    metrics.CohenKappa(), window_size=self.rolling_window
+                )
                 for _ in range(len(self.models))
             ]
         else:

@@ -94,6 +94,17 @@ padded with effective zeros. Their reconstruction preserves exact zero and one,
 so connections introduced by later expansions remain disabled for older tasks.
 Binary masks retain their existing binarization behavior.
 
+After `Ignore`, MAGIC compares the adapted candidate with the pre-drift model
+retrieved through rollback on a sample of the preceding concept. The full old
+backbone and head are archived in `forgotten_models` only if their Kappa advantage
+is positive and reaches `minimum_k_difference` (default `0.04`). Both networks
+are evaluated on independent copies with a fresh local temporal context; online
+buffers, pending predictions and optimizers are unchanged. The concept sample
+continues filling outside the ensemble phase up to `data_points_previous_concept`
+(default `1000`). Historical heads, masks and single-head biases are retained
+for CL reconstruction even when no full snapshot is archived. The same policy
+applies to sigmoid and binary masks and to the unmasked ablation.
+
 At a drift, Mask-Last freezes previously trainable weights and initializes their
 sigmoid masks to an effective value of `0.9` (logit approximately `2.1972`). Masks
 on already frozen weights retain their previous logits. This includes recurrent
@@ -115,7 +126,6 @@ LearnerConfig(
     name="MAGIC_Net_head_only",
     model=CFG.create_multihead_crnn,
     numeric=True,
-    batch_learner=False,
     drift=True,
     magic=True,
 )
@@ -132,13 +142,13 @@ The backbone remains trainable until `Expand` is first selected; afterwards,
 and exceed its score multiplied by `ENSEMBLE_TH`; ties choose `Ignore`.
 There is no increase in recurrent hidden size.
 
-If `Ignore` wins, the full pre-drift model is stored in `forgotten_models`, using
-MAGIC's delayed checkpoint retrieval through `restore_previous_state()` /
-`get_previous_state()`. This retains the historical backbone as well as the head
-when the backbone is still trainable. Checkpoint frequency, detector delay and
-grace period follow the same behavior as MAGIC Net.
+If `Ignore` wins, the pre-drift model is retrieved using MAGIC's delayed checkpoint
+mechanism through `restore_previous_state()` / `get_previous_state()`. The full
+snapshot is archived only when the old-concept Kappa comparison described above
+justifies retaining it. This includes both backbone and head. Checkpoint frequency,
+detector delay and grace period follow the same behavior as MAGIC Net.
 
-CL evaluation automatically uses `InferenceHeadOnlyMagicNet`, which evaluates
+CL evaluation automatically uses `InferenceMultiHeadCRNN`, which evaluates
 every stored task with the appropriate backbone and head. Direct usage also
 supports `ensemble_data_points=-1` to keep all candidates throughout inference,
 and `rolling_window` for a rolling Cohen's Kappa.
