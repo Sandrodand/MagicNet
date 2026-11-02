@@ -50,7 +50,7 @@ class MagicNet:
             The length of the sliding window that builds the single sequences.
             Must be greater than 1.
         stride: int, default: 1.
-            The length of the sliding window's stride.
+            The sliding window's stride. Only 1 is supported.
         train_epochs: int, default: 10.
             The training epochs to perform in _learn_many method.
         train_verbose: bool, default:False.
@@ -93,6 +93,8 @@ class MagicNet:
             )
         if seq_len < 2:
             raise ValueError("seq_len must be greater than 1")
+        if stride != 1:
+            raise ValueError("stride must be 1")
         self.multihead = multi_head
 
         self.columns_args = kwargs

@@ -51,9 +51,9 @@ class EvaluateContinualLearning:
         path_write: str
              The path to which write the evaluation outputs.
         batch_size: int
-             The batch size of the periodic learners. It is used when writing the performance.
+             Reference training batch size, retained for compatibility with existing callers.
         seq_len: int
-             The temporal order of the learners that considers temporal dependence (ARF_TA, cPNN, cRNN, DYNcPNN, ...)
+             Reference temporal order, retained for compatibility with existing callers.
         suffix: str, default: ''
             The suffix to add the evaluation outputs' file names.
         print_suffix: str, default: ''
@@ -160,14 +160,14 @@ class EvaluateContinualLearning:
         Returns
         -------
         It writes the following pickle files in the path_write/dataset_name path.
-        -   cl_metrics_{batch_size}_{seq_len}{suffix}.pkl:
+        -   cl_metrics{suffix}.pkl:
             It's a dict d with the structure: d[model_name][iteration][metric][cl_metric]. Where:
             -   model_name is the name of the model specified in LearnerConfig.
             -   iteration is the index iteration (0 if you have only one iteration)
             -   metric can be 'kappa' for Cohen's Kappa or 'accuracy' for balanced accuracy
             -   cl_metric can be 'bwt', 'avg' or 'a'.
 
-        -   metric_tables_{batch_size}_{seq_len}{suffix}.pkl:
+        -   metric_tables{suffix}.pkl:
             It's a dict d with the structure: d[model_name][metric][iteration].
             -   model_name is the name of the model specified in LearnerConfig.
             -   metric can be 'kappa' for Cohen's Kappa, 'accuracy' for balanced accuracy, 'time' for time.
@@ -175,7 +175,7 @@ class EvaluateContinualLearning:
             The value is a matrix that in position (i,j) contains the metric of the model trained after the end of
             the true concept i and tested on the test set of the true concept j.
 
-        - predictions_{batch_size}_{seq_len}{suffix}.pkl:
+        - cl_predictions{suffix}.pkl:
             It's a dict d where d[name][it] contains a list with shape
             (true_concepts, true_concepts, test_data_points). The element in position (i,j,k) represents the prediction
             of the model (at the iteration it) trained after the end of the true concept i, tested on the test set of
@@ -189,6 +189,8 @@ class EvaluateContinualLearning:
                 self.checkpoint[model_name_perf][iteration]
             ):
                 self.predictions[model_name][iteration].append([])
+                if model_dict.dyn_cpnn:
+                    model_task = model_task.get_cl_checkpoint()
                 if (
                     model_dict.cpnn
                     and not model_dict.magic
@@ -301,7 +303,7 @@ class EvaluateContinualLearning:
         with open(
             os.path.join(
                 self.path_write,
-                f"metric_tables_{self.batch_size}_{self.seq_len}{self.suffix}.pkl",
+                f"metric_tables{self.suffix}.pkl",
             ),
             "wb",
         ) as f:
@@ -309,7 +311,7 @@ class EvaluateContinualLearning:
         with open(
             os.path.join(
                 self.path_write,
-                f"cl_metrics_{self.batch_size}_{self.seq_len}{self.suffix}.pkl",
+                f"cl_metrics{self.suffix}.pkl",
             ),
             "wb",
         ) as f:
@@ -317,7 +319,7 @@ class EvaluateContinualLearning:
         with open(
             os.path.join(
                 self.path_write,
-                f"cl_predictions_{self.batch_size}_{self.seq_len}{self.suffix}.pkl",
+                f"cl_predictions{self.suffix}.pkl",
             ),
             "wb",
         ) as f:

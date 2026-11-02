@@ -7,6 +7,8 @@ import river.utils as river_utils
 import os
 
 
+from detectors.detector_simulator import DetectorSimulator
+from detectors.sentinel import Sentinel
 from evaluation.buffer import Buffer
 from evaluation.learner_config import LearnerConfig
 from models.magic.magic_net import MagicNet
@@ -52,7 +54,7 @@ class EvaluatePrequential:
         max_data_points: int, default: None
             If not None it indicates the number of data points to take from the data stream.
         batch_size: int, default: 128
-            Reference batch size for rolling metric windows and output filenames.
+            Reference batch size for rolling metric windows.
         metrics: Iterable, default: ("accuracy", "kapp")
             The list of metrics to be computed. Available metrics: {'accuracy', 'kappa'}.
         learners: List[LearnerConfig], default: ()
@@ -78,7 +80,9 @@ class EvaluatePrequential:
         drift_detector: detector, default: None.
             If provided, the automatic drift detector. The supervised drift are detected using the task labels of the
             data stream. This detector is only used to manage concept drift in the models. If None, it uses
-            the task labels also to manage concept drift in the models.
+            the task labels also to manage concept drift in the models. Sentinel is
+            updated after all learners predict and before training. Simulated drift
+            timestamps and supervised boundaries are applied before prediction.
         iteration_str: str, default: None.
             The string to append to each line when printing the outputs. If None, it prints the iteration index.
         initial_task: int, default: 1.
@@ -182,44 +186,45 @@ class EvaluatePrequential:
                     river_metrics.BalancedAccuracy(), window_size=rolling
                 )
 
-    def _iter_anytime_learners(
-        self,
-        x,
-        x_preproc,
-        y,
-        x_train,
-        x_train_preproc,
-        y_train,
-        models: List[LearnerConfig],
-        task=None,
-        iteration=0,
-        idx=-1,
-    ):
-        for model in models:
-            if model.numeric:
-                x_ = list(x_preproc.values())
-            else:
-                x_ = x
+    def _start_task(self, iteration, idx):
+        """Store the preceding task before adaptation and reset task metrics."""
+        print(" " * 50, end="\r")
+        self._write_pickles(iteration, write_checkpoints=True)
+        print("SUPERVISED DRIFT:", idx)
+        for model in self.learners:
             model_name = model.name + "_anytime"
-            if self.drift_supervised:
-                # reset 'task' and 'rolling' metrics
-                for metric in self.metrics:
-                    for t in ["task"] + self.rolling_metrics:
-                        self._eval[model_name]["metrics"][t][metric][
-                            iteration
-                        ] = self._get_metric(metric, t)
-                self._perf[model_name]["drifts"][iteration].append(
-                    len(self._perf[model_name]["all"][self.metrics[0]][iteration])
-                )
-                self.checkpoint[model_name][iteration].append(
-                    pickle.loads(pickle.dumps(self._eval[model_name]["alg"][iteration]))
-                )
-            if self.drift_detected and model.drift:
-                self._eval[model_name]["alg"][iteration].add_new_column()
-                if model.cpnn or model.magic:
-                    self._perf[model_name]["memory"][iteration].append(
-                        self._eval[model_name]["alg"][iteration].get_size()
+            for metric in self.metrics:
+                for period in ["task"] + self.rolling_metrics:
+                    self._eval[model_name]["metrics"][period][metric][iteration] = (
+                        self._get_metric(metric, period)
                     )
+            self._perf[model_name]["drifts"][iteration].append(idx)
+            learner = self._eval[model_name]["alg"][iteration]
+            checkpoint = (
+                learner.get_cl_checkpoint()
+                if model.dyn_cpnn
+                else pickle.loads(pickle.dumps(learner))
+            )
+            self.checkpoint[model_name][iteration].append(checkpoint)
+
+    def _apply_drift(self, iteration, idx):
+        """Notify all learners at the point when the detector signal is available."""
+        self.detected_drifts[iteration].append(idx)
+        print(" " * 50, end="\r")
+        print("DETECTED DRIFT:", idx)
+        self._write_pickles(iteration, write_checkpoints=True)
+        for model in self.learners:
+            if model.drift:
+                model_name = model.name + "_anytime"
+                learner = self._eval[model_name]["alg"][iteration]
+                learner.add_new_column()
+                if model.cpnn or model.magic:
+                    self._perf[model_name]["memory"][iteration].append(learner.get_size())
+
+    def _predict(self, x, x_preproc, y, iteration, idx):
+        for model in self.learners:
+            x_ = list(x_preproc.values()) if model.numeric else x
+            model_name = model.name + "_anytime"
             if model.cpnn or model.magic:
                 y_hat = self._eval[model_name]["alg"][iteration].predict_one(
                     x_, timestamp=idx
@@ -240,6 +245,10 @@ class EvaluatePrequential:
                     self._perf[model_name][t][metric][iteration].append(
                         self._eval[model_name]["metrics"][t][metric][iteration].get()
                     )
+
+    def _learn(self, x_train, x_train_preproc, y_train, iteration, idx):
+        for model in self.learners:
+            model_name = model.name + "_anytime"
             start = datetime.datetime.now()
             if x_train is not None:
                 if model.numeric:
@@ -256,16 +265,7 @@ class EvaluatePrequential:
             self._perf[model_name]["time"][iteration].append((end - start).microseconds)
 
     def _write_pickles(self, iteration=0, write_checkpoints=False):
-        seq_len = ""
         if self.learners:
-            for model in self.learners:
-                if model.cpnn:
-                    seq_len = f"_{self._eval[model.name + '_anytime']['alg'][iteration].get_seq_len()}"
-                    break
-            else:
-                first_model = self.learners[0]
-                if "_TA" in first_model.name.upper():
-                    seq_len = f"_{self._eval[first_model.name + '_anytime']['alg'][iteration].ta_order + 1}"
             for i, m in enumerate(self.learners):
                 m_name = m.name.replace("_anytime", "").lower()
                 if m.magic:
@@ -309,7 +309,7 @@ class EvaluatePrequential:
         with open(
             os.path.join(
                 self.path_write,
-                f"performance_{self.batch_size}{seq_len}{self.suffix}.pkl",
+                f"performance{self.suffix}.pkl",
             ),
             "wb",
         ) as f:
@@ -317,7 +317,7 @@ class EvaluatePrequential:
         with open(
             os.path.join(
                 self.path_write,
-                f"predictions_{self.batch_size}{seq_len}{self.suffix}.pkl",
+                f"predictions{self.suffix}.pkl",
             ),
             "wb",
         ) as f:
@@ -334,7 +334,7 @@ class EvaluatePrequential:
             with open(
                 os.path.join(
                     self.path_write,
-                    f"checkpoints_{self.batch_size}{seq_len}{self.suffix}_it{iteration}.pkl",
+                    f"checkpoints{self.suffix}_it{iteration}.pkl",
                 ),
                 "wb",
             ) as f:
@@ -351,7 +351,7 @@ class EvaluatePrequential:
                     check[model].append(c.columns.columns)
             else:
                 for c in self.checkpoint[model][iteration]:
-                    check[model].append([m.model.columns.columns for m in c.models])
+                    check[model].append(c.get_cl_checkpoint())
         return check
 
     def evaluate(
@@ -364,7 +364,7 @@ class EvaluatePrequential:
         iteration_str=None,
     ):
         """
-        It evaluates anytime learners by predicting each point before training
+        It evaluates the learners by predicting each point before training
         on the corresponding labeled point. Labels can be delayed. Supervised
         task boundaries create CL checkpoints; detected drifts trigger adaptation.
 
@@ -373,7 +373,7 @@ class EvaluatePrequential:
         callback: Callable, default: None.
             A callback function to be called after each iteration. It will receive the following parameters:
             -   iteration: int. the number of the iteration (starting from 0)
-            -   learners_dict: list. The list of LearnersConfig representing the anytime learners.
+            -   learners_dict: list. The list of LearnersConfig representing the learners.
             -   path: str. The path_write parameter of the constructor.
             -   suffix: str. The suffix parameter of the constructor.
             -   models: dict. A dictionary containing for each name of the models in learners_dict the object
@@ -392,12 +392,12 @@ class EvaluatePrequential:
         Returns
         -------
         It writes the following pickle files in the path_write/dataset_name path.
-        -   performance_{batch_size}_{seq_len}{suffix}.pkl:
+        -   performance{suffix}.pkl:
             A dict d indexed by '{name}_anytime'. The 'drifts' entry contains
             task boundary indices; 'time' and 'memory' contain per-iteration
             measurements. The 'all', 'task', and rolling metric entries contain
             per-point metric values, indexed by metric and iteration.
-        - predictions_{batch_size}_{seq_len}{suffix}.pkl:
+        - predictions{suffix}.pkl:
             A dict d where d['{name}_anytime'][it] contains the predictions
             made by the model during iteration 'it'.
         """
@@ -471,34 +471,35 @@ class EvaluatePrequential:
                 x_train_preproc = self.buffer_x_preproc.enqueue(x_preproc)
                 y_train = self.buffer_y.enqueue(y)
 
-                if drift_detector is not None and x_train is not None:
-                    self.drift_detected = drift_detector.update(x_train, y_train)
-                    if not supervised:
-                        self.drift_supervised = self.drift_detected
-                else:
+                self.drift_detected = False
+                if drift_detector is None:
                     self.drift_detected = self.drift_supervised
+                elif isinstance(drift_detector, DetectorSimulator):
+                    # Simulated timestamps refer to stream points, independently of label delay.
+                    self.drift_detected = drift_detector.update(x, y)
+                elif not isinstance(drift_detector, Sentinel) and x_train is not None:
+                    self.drift_detected = drift_detector.update(x_train, y_train)
+                if not supervised and not isinstance(drift_detector, Sentinel):
+                    self.drift_supervised = self.drift_detected
 
-                if self.drift_detected:
-                    self.detected_drifts[-1].append(idx)
-                    print(" " * 50, end="\r")
-                    print("DETECTED DRIFT:", idx)
-                    self._write_pickles(write_checkpoints=True)
                 if self.drift_supervised:
-                    print(" " * 50, end="\r")
-                    self._write_pickles(write_checkpoints=True)
-                    print("SUPERVISED DRIFT:", idx)
+                    self._start_task(iteration, idx)
+                if self.drift_detected:
+                    self._apply_drift(iteration, idx)
 
-                self._iter_anytime_learners(
-                    x=x,
-                    x_preproc=x_preproc,
-                    y=y,
-                    x_train=x_train,
-                    x_train_preproc=x_train_preproc,
-                    y_train=y_train,
-                    models=self.learners,
-                    task=self.prev_task,
-                    iteration=iteration,
-                    idx=idx,
+                self._predict(x, x_preproc, y, iteration, idx)
+
+                # Label-based detection must follow inference by every learner.
+                if isinstance(drift_detector, Sentinel) and x_train is not None:
+                    self.drift_detected = drift_detector.update(x_train, y_train)
+                    if self.drift_detected:
+                        if not supervised:
+                            self.drift_supervised = True
+                            self._start_task(iteration, idx)
+                        self._apply_drift(iteration, idx)
+
+                self._learn(
+                    x_train, x_train_preproc, y_train, iteration, idx
                 )
 
                 if self.drift_supervised:
@@ -518,9 +519,12 @@ class EvaluatePrequential:
                         magic_model.manager.force_decision()
                     magic_model.manager.grace_period = False
                     magic_model.manager.in_expansion = False
-                self.checkpoint[model_name][iteration].append(
-                    pickle.loads(pickle.dumps(learner))
+                checkpoint = (
+                    learner.get_cl_checkpoint()
+                    if model.dyn_cpnn
+                    else pickle.loads(pickle.dumps(learner))
                 )
+                self.checkpoint[model_name][iteration].append(checkpoint)
 
             self._write_pickles(self._iterations - 1, write_checkpoints=True)
 

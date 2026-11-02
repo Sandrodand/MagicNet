@@ -98,7 +98,6 @@ class DynamicCPNN:
         minimum_k_difference: float = 0.04,
         verbose: bool = True,
         inference_ensemble_data_points: int = 500,
-        recurrent_concepts: bool = False,
     ):
         """
         It implements the Dynamic cPNN (DYNcPNN) model. The model starts with a single cPNN. After a drift detection,
@@ -139,10 +138,6 @@ class DynamicCPNN:
         inference_ensemble_data_points: int, default: 2*128.
             Number of data points after which to choose the best model in the ensemble during the inference mode.
             Use -1 to keep the ensemble during the entire inference phase.
-        recurrent_concepts: bool, default: False.
-            True if you want to add to the ensemble the columns of all the models in the pool without training them.
-            This is useful in the case of recurrent concepts. A previously trained column may be enough for an
-            already-seen concept.
         """
         self.models = [
             SingleModel(m, timestamp=time.time() - i) for i, m in enumerate(models)
@@ -154,11 +149,10 @@ class DynamicCPNN:
         # -1 drift not in evaluation,
         # >=0 number of data points following the currently evaluating drift.
         self.data_points_previous_concept = data_points_previous_concept
-        self.stream_start = True
         self.predictions = {}
-        self.drift_window = drift_window_batches * self.ensemble[0].model.batch_size + 1
+        self.drift_window = drift_window_batches * self.ensemble[0].model.batch_size
         self.grace_period = grace_period
-        self.grace_period_cont = 0
+        self.grace_period_cont = 0 if grace_period else -1
         self.cont = 0
         self.choices = []
         self.max_models = max_models
@@ -179,7 +173,6 @@ class DynamicCPNN:
         self.features = {}
         self.last_ts_predict = -1
         self.last_ts_train = -1
-        self.recurrent = recurrent_concepts
 
     def learn_one(self, x, y, timestamp=-1):
         """
@@ -202,22 +195,15 @@ class DynamicCPNN:
         self.last_ts_train = timestamp
         if self.drift_cont > -1:
             self.drift_cont += 1
-            if (
-                self.store_models
-                and len(self.concept_x["new"]) < self.data_points_previous_concept
-            ):
-                self.concept_x["new"].append(x)
-                self.concept_y["new"].append(y)
-        elif (
-            self.stream_start
-            and self.store_models
+        if (
+            self.store_models
             and len(self.concept_x["new"]) < self.data_points_previous_concept
         ):
             self.concept_x["new"].append(x)
             self.concept_y["new"].append(y)
         if self.grace_period_cont > -1:
             self.grace_period_cont += 1
-            if self.grace_period_cont == self.grace_period:
+            if not self.grace_period or self.grace_period_cont >= self.grace_period:
                 if self.verbose:
                     print("\nReset grace period")
                 self.grace_period_cont = -1
@@ -231,144 +217,156 @@ class DynamicCPNN:
         if self.drift_cont > -1:
             ks = [m.get() for m in self.metrics]
             self.selected = np.argmax(ks)
-            if self.drift_cont == self.drift_window:
-                if ks[self.selected] - ks[0] < self.minimum_k_difference:
-                    self.selected = 0
-                selected_model: ModelEnsemble = self.ensemble[self.selected]
-                choice = {
-                    "cont": self.cont - self.drift_cont,
-                    "kappas": ks,
-                    "selected_idx": self.selected,
-                    "selected_model_idx": selected_model.model_idx,
-                    "selected_column": selected_model.column,
-                    "selected_type": selected_model.model_type,
-                    "model_idx": [m.model_idx for m in self.ensemble],
-                    "columns": [m.column for m in self.ensemble],
-                    "types": [m.model_type for m in self.ensemble],
-                    "grace_period": False,
-                    "already_in_evaluation": False,
-                }
-                if selected_model.model_type != -1:
-                    self.grace_period_cont = self.drift_cont
-                    # If we accept the drift, we can discard the model that doesn't introduce the new column and
-                    # substitute it with its copy that adds a new column. This way, when we will remove the last
-                    # column from all the non-selected models, we will have a column representing the last concept.
-                    model_new_column = [m for m in self.ensemble if m.model_type == 0][
-                        0
-                    ]
-                    model_new_column_idx = [
-                        i
-                        for i in range(len(self.ensemble))
-                        if self.ensemble[i].model_type == 0
-                    ][0]
-                    self.models[0].model = model_new_column.model
-                    self.ensemble[0] = ModelEnsemble(
-                        model=model_new_column.model,
-                        model_idx=model_new_column.model_idx,
-                        train=model_new_column.train,
-                        column=model_new_column.column,
-                        model_type=0,
-                    )
-                    self.metrics[0] = self.metrics[model_new_column_idx]
-
-                    if selected_model.model_type == 0:
-                        # we moved the model with model_type==0 to the first position
-                        self.selected = 0
-                        selected_model = self.ensemble[0]
-                    self.ensemble[model_new_column_idx].model_type = 2
-                    # Otherwise, when looping on the ensemble, it would remove the last column twice
-                    # (one time for the first position and one time for the original position)
-                if selected_model.model_type == 0 or selected_model.model_type == 1:
-                    choice["accepted"] = True
-                    choice["recurrent"] = False
-                    if self.verbose:
-                        print("\nDrift ACCEPTED: ", [np.round(k, 3) for k in ks])
-                elif selected_model.model_type == 2:
-                    # we are using a previous frozen column
-                    choice["accepted"] = True
-                    choice["recurrent"] = True
-                    if self.verbose:
-                        print("\nRECURRENT concept: ", [np.round(k, 3) for k in ks])
-                else:  # selected_model.model_type == -1
-                    # we rejected the drift
-                    choice["accepted"] = False
-                    choice["recurrent"] = False
-                    if self.verbose:
-                        print("\nDrift REJECTED: ", [np.round(k, 3) for k in ks])
-                    if self.store_models:
-                        # Two situations could cause the rejection of a drift:
-                        # 1) The model can adapt quickly to the new concept without adding a column.
-                        # 2) The drift is not significant.
-                        # In the first case, when adapting to the new concept, the model may lose the predictive ability
-                        # on the previous. To avoid this situation, we compare the performance (on the previous concept)
-                        # of the current model and the model stored before the drift. If the latter performs better
-                        # we must save it into 'models' in order to not forget the concept.
-                        current_model: cPNN = pickle.loads(
-                            pickle.dumps(selected_model.model)
-                        )
-                        current_model.reset_previous_data_points()
-                        current_k = metrics.CohenKappa()
-                        old_model: cPNN = pickle.loads(pickle.dumps(self.old_model))
-                        old_model.reset_previous_data_points()
-                        old_k = metrics.CohenKappa()
-                        for x, y in zip(self.concept_x["old"], self.concept_y["old"]):
-                            old_k = old_k.update(
-                                y, old_model.predict_one(x, timestamp=-1)
-                            )
-                            current_k = current_k.update(
-                                y, current_model.predict_one(x, timestamp=-1)
-                            )
-                        if old_k.get() - current_k.get() >= self.minimum_k_difference:
-                            self.models.append(SingleModel(self.old_model))
-                            choice["old_model"] = True
-                            if self.verbose:
-                                print(
-                                    "STORED old model:",
-                                    np.round(old_k.get(), 3),
-                                    np.round(current_k.get(), 3),
-                                )
-                        else:
-                            choice["old_model"] = False
-                            if self.verbose:
-                                print(
-                                    "DISCARDED old model:",
-                                    np.round(old_k.get(), 3),
-                                    np.round(current_k.get(), 3),
-                                )
-                        choice["old_model_k"] = old_k.get()
-                        choice["current_model_k"] = current_k.get()
-                    self.concept_x["old"].clear()
-                    self.concept_y["old"].clear()
-                for i in range(0, len(self.ensemble)):
-                    if i != self.selected and self.ensemble[i].model_type != 2:
-                        self.ensemble[i].model.remove_last_column()
-                self.models[selected_model.model_idx].timestamp = time.time()
-                self.models = sorted(
-                    self.models, key=lambda m: m.timestamp, reverse=True
-                )[: self.max_models]
-                self.ensemble = [selected_model]
-                self.metrics = [self.metrics[self.selected]]
-                self.choices.append(choice)
-                choice["pool_models_columns"] = [
-                    len(m.model.columns.columns) for m in self.models[1:]
-                ]
-                self.choices = sorted(self.choices, key=lambda c: c["cont"])
-                self.predictions = {}
-                self.selected = 0
-                self.drift_cont = -1
-                self.old_model = None
-
-                if self.verbose:
-                    print(f"\nModels:")
-                    for m in self.models:
-                        print(str(m), end=";\n")
-                    print(f"\nEnsemble:")
-                    for m in self.ensemble:
-                        print(str(m), end=";\n")
-                    print()
+            if self.drift_cont >= self.drift_window:
+                self.force_decision()
         self.cont += 1
         if timestamp in self.predictions:
             del self.predictions[timestamp]
+
+    def force_decision(self):
+        """Resolve an active comparison using the candidate metrics collected so far."""
+        if self.inference or self.drift_cont < 0:
+            return
+        ks = [m.get() for m in self.metrics]
+        self.selected = int(np.argmax(ks))
+        if ks[self.selected] - ks[0] < self.minimum_k_difference:
+            self.selected = 0
+        selected_model: ModelEnsemble = self.ensemble[self.selected]
+        choice = {
+            "cont": self.cont - self.drift_cont,
+            "kappas": ks,
+            "selected_idx": self.selected,
+            "selected_model_idx": selected_model.model_idx,
+            "selected_column": selected_model.column,
+            "selected_type": selected_model.model_type,
+            "model_idx": [m.model_idx for m in self.ensemble],
+            "columns": [m.column for m in self.ensemble],
+            "types": [m.model_type for m in self.ensemble],
+            "grace_period": False,
+            "already_in_evaluation": False,
+        }
+        if selected_model.model_type != -1:
+            self.grace_period_cont = (
+                self.drift_cont
+                if self.grace_period and self.drift_cont < self.grace_period
+                else -1
+            )
+            # If we accept the drift, we can discard the model that doesn't introduce the new column and
+            # substitute it with its copy that adds a new column. This way, when we will remove the last
+            # column from all the non-selected models, we will have a column representing the last concept.
+            model_new_column = [m for m in self.ensemble if m.model_type == 0][
+                0
+            ]
+            model_new_column_idx = [
+                i
+                for i in range(len(self.ensemble))
+                if self.ensemble[i].model_type == 0
+            ][0]
+            self.models[0].model = model_new_column.model
+            self.ensemble[0] = ModelEnsemble(
+                model=model_new_column.model,
+                model_idx=model_new_column.model_idx,
+                train=model_new_column.train,
+                column=model_new_column.column,
+                model_type=0,
+            )
+            self.metrics[0] = self.metrics[model_new_column_idx]
+
+            if selected_model.model_type == 0:
+                # we moved the model with model_type==0 to the first position
+                self.selected = 0
+                selected_model = self.ensemble[0]
+            self.ensemble[model_new_column_idx].model_type = 2
+            # Otherwise, when looping on the ensemble, it would remove the last column twice
+            # (one time for the first position and one time for the original position)
+        if selected_model.model_type == 0 or selected_model.model_type == 1:
+            choice["accepted"] = True
+            choice["recurrent"] = False
+            if self.verbose:
+                print("\nDrift ACCEPTED: ", [np.round(k, 3) for k in ks])
+        else:  # selected_model.model_type == -1
+            # we rejected the drift
+            choice["accepted"] = False
+            choice["recurrent"] = False
+            if self.verbose:
+                print("\nDrift REJECTED: ", [np.round(k, 3) for k in ks])
+            if self.store_models:
+                # Two situations could cause the rejection of a drift:
+                # 1) The model can adapt quickly to the new concept without adding a column.
+                # 2) The drift is not significant.
+                # In the first case, when adapting to the new concept, the model may lose the predictive ability
+                # on the previous. To avoid this situation, we compare the performance (on the previous concept)
+                # of the current model and the model stored before the drift. If the latter performs better
+                # we must save it into 'models' in order to not forget the concept.
+                current_model: cPNN = pickle.loads(
+                    pickle.dumps(selected_model.model)
+                )
+                current_model.reset_previous_data_points()
+                current_k = metrics.CohenKappa()
+                old_model: cPNN = pickle.loads(pickle.dumps(self.old_model))
+                old_model.reset_previous_data_points()
+                old_k = metrics.CohenKappa()
+                for x, y in zip(self.concept_x["old"], self.concept_y["old"]):
+                    old_k = old_k.update(
+                        y, old_model.predict_one(x, timestamp=-1)
+                    )
+                    current_k = current_k.update(
+                        y, current_model.predict_one(x, timestamp=-1)
+                    )
+                if old_k.get() - current_k.get() >= self.minimum_k_difference:
+                    self.models.append(SingleModel(self.old_model))
+                    choice["old_model"] = True
+                    if self.verbose:
+                        print(
+                            "STORED old model:",
+                            np.round(old_k.get(), 3),
+                            np.round(current_k.get(), 3),
+                        )
+                else:
+                    choice["old_model"] = False
+                    if self.verbose:
+                        print(
+                            "DISCARDED old model:",
+                            np.round(old_k.get(), 3),
+                            np.round(current_k.get(), 3),
+                        )
+                choice["old_model_k"] = old_k.get()
+                choice["current_model_k"] = current_k.get()
+            self.concept_x["old"].clear()
+            self.concept_y["old"].clear()
+        for i in range(0, len(self.ensemble)):
+            if i != self.selected and self.ensemble[i].model_type != 2:
+                self.ensemble[i].model.remove_last_column()
+        self.models[selected_model.model_idx].timestamp = time.time()
+        self.models = sorted(
+            self.models, key=lambda m: m.timestamp, reverse=True
+        )[: self.max_models]
+        self.ensemble = [selected_model]
+        self.metrics = [self.metrics[self.selected]]
+        self.choices.append(choice)
+        choice["pool_models_columns"] = [
+            len(m.model.columns.columns) for m in self.models[1:]
+        ]
+        self.choices = sorted(self.choices, key=lambda c: c["cont"])
+        self.predictions = {}
+        self.selected = 0
+        self.drift_cont = -1
+        self.old_model = None
+
+        if self.verbose:
+            print(f"\nModels:")
+            for m in self.models:
+                print(str(m), end=";\n")
+            print(f"\nEnsemble:")
+            for m in self.ensemble:
+                print(str(m), end=";\n")
+            print()
+
+    def get_cl_checkpoint(self):
+        """Resolve pending expansion on an independent copy, preserving online training."""
+        model = pickle.loads(pickle.dumps(self))
+        model.force_decision()
+        return model
 
     def predict_one(self, x, timestamp=-1):
         """
@@ -388,12 +386,15 @@ class DynamicCPNN:
         """
         self.last_ts_predict = timestamp
         self.predictions[timestamp] = []
+        previous_data_points = self._previous_data_points
+        if previous_data_points is None:
+            previous_data_points = np.empty((0, np.asarray(x).size))
         for i in range(len(self.ensemble)):
             self.predictions[timestamp].append(
                 self.ensemble[i].model.predict_one(
                     x,
                     column_id=self.ensemble[i].column,
-                    previous_data_points=self._previous_data_points,
+                    previous_data_points=previous_data_points,
                     timestamp=timestamp,
                 )
             )
@@ -408,8 +409,8 @@ class DynamicCPNN:
     def add_new_column(self, task_id: int = None):
         """
         Call it to manage a drift detection. It builds the ensemble containing the current model without adding a new
-        column, the current model with a new column, the stored models and all the previous columns of the current and
-        stored models. If a drift is already in evaluation it ignores the new drift detection. The same happens during
+        column, the current model with a new column and the stored models with a new column.
+        If a drift is already in evaluation it ignores the new drift detection. The same happens during
         the grace period (a configurable number of data points following the last accepted drift detection).
 
         Parameters
@@ -417,7 +418,6 @@ class DynamicCPNN:
         task_id: int, default: None
             The id of the new task. If None it increments the last one.
         """
-        self.stream_start = False
         if self.grace_period_cont != -1:
             if self.verbose:
                 print("\nDrift requested during GRACE PERIOD")
@@ -481,18 +481,6 @@ class DynamicCPNN:
                 ]
                 + [ModelEnsemble(model_new, model_type=0, train=True, model_idx=0)]
             )
-            if self.recurrent:
-                for i, m in enumerate(self.models):
-                    for col in range(0, len(m.model.columns.columns) - 1):
-                        self.ensemble.append(
-                            ModelEnsemble(
-                                m.model,
-                                model_type=2,
-                                train=False,
-                                model_idx=i,
-                                column=col,
-                            )
-                        )
             self.predictions = {}
             self.metrics = [metrics.CohenKappa() for _ in self.ensemble]
             if self.store_models:
@@ -525,20 +513,20 @@ class DynamicCPNN:
                 self._previous_data_points = self._previous_data_points_old.copy()
             else:
                 self._previous_data_points = None
-            self.predictions = {}
+            self.predictions = self._predictions_old
         if mode and not self.inference:
             if self._previous_data_points is not None:
                 self._previous_data_points_old = self._previous_data_points.copy()
             else:
                 self._previous_data_points_old = None
+            self._predictions_old = pickle.loads(pickle.dumps(self.predictions))
             self._ensemble_old = self.ensemble.copy()
             self._selected_old = self.selected
             self._metrics_old = [pickle.loads(pickle.dumps(m)) for m in self.metrics]
 
-            candidate_models = [m.model for m in self.models]
-            candidate_models.extend(m.model for m in self._ensemble_old)
-            if self.old_model is not None:
-                candidate_models.append(self.old_model)
+            checkpoint = self.get_cl_checkpoint()
+            active_model = checkpoint.ensemble[checkpoint.selected].model
+            candidate_models = [m.model for m in checkpoint.models]
             unique_models = []
             seen = set()
             for model in candidate_models:
@@ -547,10 +535,16 @@ class DynamicCPNN:
                     unique_models.append(model)
 
             inference_ensemble = []
+            initial_selected = 0
             for model_idx, model in enumerate(unique_models):
                 inference_model = pickle.loads(pickle.dumps(model))
                 inference_model.reset_previous_data_points()
                 for col in range(len(inference_model.columns.columns)):
+                    if (
+                        model is active_model
+                        and col == len(inference_model.columns.columns) - 1
+                    ):
+                        initial_selected = len(inference_ensemble)
                     inference_ensemble.append(
                         ModelEnsemble(
                             model=inference_model,
@@ -561,7 +555,7 @@ class DynamicCPNN:
                         )
                     )
             self.ensemble = inference_ensemble
-            self.selected = 0
+            self.selected = initial_selected
             self.metrics = [metrics.CohenKappa() for _ in self.ensemble]
             self._previous_data_points = None
             self.inference_count = 0
@@ -587,6 +581,10 @@ class DynamicCPNN:
             del self.predictions[timestamp]
         self.inference_count += 1
         if self.inference_count == self.inference_ensemble_data_points:
+            self.predictions = {
+                ts: [predictions[self.selected]]
+                for ts, predictions in self.predictions.items()
+            }
             self.ensemble = [self.ensemble[self.selected]]
             self.metrics = [self.metrics[self.selected]]
             self.selected = 0
@@ -598,8 +596,16 @@ class DynamicCPNN:
         """
         self._previous_data_points = None
         self.predictions = {}
-        for m in self.models:
-            m.model.reset_previous_data_points()
+        models = [m.model for m in self.ensemble]
+        if not self.inference:
+            models.extend(m.model for m in self.models)
+            if self.old_model is not None:
+                models.append(self.old_model)
+        seen = set()
+        for model in models:
+            if id(model) not in seen:
+                seen.add(id(model))
+                model.reset_previous_data_points()
 
     def get_seq_len(self):
         return self.ensemble[0].model.get_seq_len()

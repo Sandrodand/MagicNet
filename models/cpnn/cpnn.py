@@ -34,7 +34,6 @@ class cPNN:
         seq_len: int = 5,
         stride: int = 1,
         train_epochs: int = 10,
-        train_verbose: bool = False,
         anytime_learner: bool = False,
         acpnn: bool = True,
         qcpnn: bool = False,
@@ -56,12 +55,11 @@ class cPNN:
             The learning rate value of single columns' Adam Optimizer.
         seq_len: int, default: 5.
             The length of the sliding window that builds the single sequences.
+            Must be greater than 1.
         stride: int, default: 1.
-            The length of the sliding window's stride.
+            The sliding window's stride. Only 1 is supported.
         train_epochs: int, default: 10.
             In case of anytime_learner=False, the training epochs to perform in learn_many method.
-        train_verbose: bool, default:False.
-            True if, during the learn_many execution, you want to print the metrics after each training epoch.
         anytime_learner: bool, default: False.
             If True the model learns data point by data point by data point. Otherwise, it buffers mini-batches of
             data points to perform training.
@@ -94,6 +92,12 @@ class cPNN:
         kwargs:
             Parameters of column_class.
         """
+        if "train_verbose" in kwargs:
+            raise TypeError("train_verbose is no longer supported by cPNN")
+        if seq_len < 2:
+            raise ValueError("seq_len must be greater than 1")
+        if stride != 1:
+            raise ValueError("stride must be 1")
         self.anytime_learner = anytime_learner
         if self.anytime_learner:
             self.loss_on_seq = True
@@ -116,7 +120,6 @@ class cPNN:
         self.seq_len = seq_len
         self.stride = stride
         self.train_epochs = train_epochs
-        self.train_verbose = train_verbose
         self.columns_perf = [metrics.CohenKappa()]
         self.task_ids = [initial_task_id]
         self.previous_data_points_anytime_inference = None
@@ -256,7 +259,14 @@ class cPNN:
                 col = self.saved_columns[0]
             else:
                 col = cols[-1]
-            self.columns.columns[-1] = pickle.loads(pickle.dumps(col["column"]))
+            # Copy the pair together so optimizer parameters reference the restored column.
+            restored = pickle.loads(pickle.dumps(col))
+            self.columns.columns[-1] = restored["column"]
+            if "optimizer" in restored:
+                self.columns.optimizers[-1] = restored["optimizer"]
+            else:
+                # Legacy checkpoints contain only the column weights.
+                self.columns.optimizers[-1] = self.columns._create_optimizer()
             self.saved_columns = []
 
     def add_new_column(self, task_id=None):
@@ -323,13 +333,14 @@ class cPNN:
             if self.save_column_freq is not None:
                 if self.cont % self.save_column_freq == 0:
                     self.saved_columns.append(
-                        {
-                            "cont": self.cont,
-                            "batch_cont": self.batch_cont,
-                            "column": pickle.loads(
-                                pickle.dumps(self.columns.columns[-1])
-                            ),
-                        }
+                        pickle.loads(pickle.dumps(
+                            {
+                                "cont": self.cont,
+                                "batch_cont": self.batch_cont,
+                                "column": self.columns.columns[-1],
+                                "optimizer": self.columns.optimizers[-1],
+                            }
+                        ))
                     )
                     max_keep = int((self.drift_delay / self.save_column_freq) + 2)
                     max_keep = max(4, max_keep)
@@ -404,25 +415,8 @@ class cPNN:
         }
         for e in range(1, self.train_epochs + 1):
             perf_epoch = self._fit(x, y)
-            if self.train_verbose:
-                print(
-                    "Training epoch ",
-                    e,
-                    "/",
-                    self.train_epochs,
-                    ". accuracy: ",
-                    perf_epoch["accuracies"],
-                    ", loss:",
-                    perf_epoch["losses"],
-                    sep="",
-                    end="\r",
-                )
             for k in perf_epoch:
                 perf_train[k].append(perf_epoch[k])
-        if self.train_verbose:
-            print()
-            print()
-
         self.train_cont[-1] = self.train_cont[-1] + 1
         return perf_train
 
@@ -528,19 +522,19 @@ class cPNN:
         previous_data_points: numpy.array, default: None.
             The features value of the data points preceding x in the sequence.
             If None, it uses the last seq_len-1 points seen during the last calls of the method.
-            It returns None if the model has not seen yet seq_len-1 data points and previous_data_points is None.
+            It returns 0 while fewer than seq_len data points are available.
         timestamp: int, default: -1.
             The timestamp associated with the
         Returns
         -------
         prediction : int
-            The predicted int label of x.
+            The predicted int label of x, or 0 during warm-up.
         """
         self.last_ts_predict = timestamp
         x = self._single_data_point_prep(x, previous_data_points)
         if x is None:
-            self.predictions[timestamp] = None
-            return None
+            self.predictions[timestamp] = 0
+            return 0
         with torch.no_grad():
             if not self.loss_on_seq:
                 pred, _ = get_pred_from_outputs(self.columns(x, column_id)[0])

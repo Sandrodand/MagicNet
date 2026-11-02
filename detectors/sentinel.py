@@ -96,6 +96,8 @@ class Sentinel:
         """
         After a detection call this method to reset the evaluator and the error rate monitor.
         """
+        self.count = 0
+        self.drift_detected = False
         self.evaluator = pickle.loads(pickle.dumps(self.model_copy))
         self.error_rate_monitor = pickle.loads(
             pickle.dumps(self.error_rate_monitor_copy)
