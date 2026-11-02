@@ -13,6 +13,8 @@ from models.utils_scl.utils import accuracy, cohen_kappa, customized_loss
 
 
 class MultiHeadCrnnManager(MagicManager):
+    name = "MultiHeadCRNN"
+
     def __init__(
         self,
         model_class=cGRULinear,
@@ -36,12 +38,14 @@ class MultiHeadCrnnManager(MagicManager):
         multi_head=True,
         data_points_previous_concept=1000,
         minimum_k_difference=0.04,
+        name="MultiHeadCRNN",
         **kwargs,
     ):
         if not multi_head:
             raise ValueError("The head-only ablation requires multi_head=True")
         if not ignore_option and not expand_option:
             raise ValueError("At least one drift candidate must be enabled")
+        self.name = name
         self.device = device
         self.model_class = model_class
         self.input_size = input_size
@@ -135,7 +139,7 @@ class MultiHeadCrnnManager(MagicManager):
         if not self.in_expansion:
             return
         for name, item in self.current_perf.items():
-            print(name, " performance: ", item)
+            self._print(name, " performance: ", item)
         if "Ignore" not in self.ensemble:
             best_model = "Expand"
         elif "Expand" not in self.ensemble:
@@ -169,7 +173,7 @@ class MultiHeadCrnnManager(MagicManager):
             }
         )
         self.ensemble_choices.sort(key=lambda item: item["data_point_counter"])
-        print("Head-only cRNN choses: ", best_model)
+        self._print("chooses:", best_model)
         self.model = self.ensemble[best_model]
         self.model_optim = self.ensemble_optims[best_model]
         self.in_expansion = False

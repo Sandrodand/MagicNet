@@ -87,6 +87,8 @@ class ModelEnsemble:
 
 
 class DynamicCPNN:
+    name = "DYNcPNN"
+
     def __init__(
         self,
         models: List[cPNN],
@@ -98,6 +100,7 @@ class DynamicCPNN:
         minimum_k_difference: float = 0.04,
         verbose: bool = True,
         inference_ensemble_data_points: int = 500,
+        name: str = "DYNcPNN",
     ):
         """
         It implements the Dynamic cPNN (DYNcPNN) model. The model starts with a single cPNN. After a drift detection,
@@ -135,10 +138,13 @@ class DynamicCPNN:
             add a column to accept drift.
         verbose: bool, default: True.
             If True, it prints the messages regarding the acceptance or rejection of the drifts.
+        name: str, default: "DYNcPNN".
+            Model identifier used in diagnostic messages.
         inference_ensemble_data_points: int, default: 2*128.
             Number of data points after which to choose the best model in the ensemble during the inference mode.
             Use -1 to keep the ensemble during the entire inference phase.
         """
+        self.name = name
         self.models = [
             SingleModel(m, timestamp=time.time() - i) for i, m in enumerate(models)
         ]
@@ -174,6 +180,12 @@ class DynamicCPNN:
         self.last_ts_predict = -1
         self.last_ts_train = -1
 
+    def _print(self, *args, **kwargs):
+        if args:
+            print(f"{self.name}:", *args, **kwargs)
+        else:
+            print(**kwargs)
+
     def learn_one(self, x, y, timestamp=-1):
         """
         It trains DYNcPNN on a single data point. On each cPNN, the training is performed after filling up a mini-batch
@@ -205,7 +217,7 @@ class DynamicCPNN:
             self.grace_period_cont += 1
             if not self.grace_period or self.grace_period_cont >= self.grace_period:
                 if self.verbose:
-                    print("\nReset grace period")
+                    self._print("Reset grace period")
                 self.grace_period_cont = -1
         if timestamp in self.predictions:
             for i in range(len(self.ensemble)):
@@ -279,13 +291,13 @@ class DynamicCPNN:
             choice["accepted"] = True
             choice["recurrent"] = False
             if self.verbose:
-                print("\nDrift ACCEPTED: ", [np.round(k, 3) for k in ks])
+                self._print("Drift ACCEPTED: ", [np.round(k, 3) for k in ks])
         else:  # selected_model.model_type == -1
             # we rejected the drift
             choice["accepted"] = False
             choice["recurrent"] = False
             if self.verbose:
-                print("\nDrift REJECTED: ", [np.round(k, 3) for k in ks])
+                self._print("Drift REJECTED: ", [np.round(k, 3) for k in ks])
             if self.store_models:
                 # Two situations could cause the rejection of a drift:
                 # 1) The model can adapt quickly to the new concept without adding a column.
@@ -309,7 +321,7 @@ class DynamicCPNN:
                     self.models.append(SingleModel(self.old_model))
                     choice["old_model"] = True
                     if self.verbose:
-                        print(
+                        self._print(
                             "STORED old model:",
                             np.round(old_k.get(), 3),
                             np.round(current_k.get(), 3),
@@ -317,7 +329,7 @@ class DynamicCPNN:
                 else:
                     choice["old_model"] = False
                     if self.verbose:
-                        print(
+                        self._print(
                             "DISCARDED old model:",
                             np.round(old_k.get(), 3),
                             np.round(current_k.get(), 3),
@@ -344,15 +356,6 @@ class DynamicCPNN:
         self.selected = 0
         self.drift_cont = -1
         self.old_model = None
-
-        if self.verbose:
-            print(f"\nModels:")
-            for m in self.models:
-                print(str(m), end=";\n")
-            print(f"\nEnsemble:")
-            for m in self.ensemble:
-                print(str(m), end=";\n")
-            print()
 
     def get_cl_checkpoint(self):
         """Resolve pending expansion on an independent copy, preserving online training."""
@@ -412,7 +415,7 @@ class DynamicCPNN:
         """
         if self.grace_period_cont != -1:
             if self.verbose:
-                print("\nDrift requested during GRACE PERIOD")
+                self._print("Drift requested during GRACE PERIOD")
             self.choices.append(
                 {
                     "cont": self.cont + 1,
@@ -425,7 +428,7 @@ class DynamicCPNN:
             self.choices = sorted(self.choices, key=lambda c: c["cont"])
         elif self.drift_cont != -1:
             if self.verbose:
-                print("\nDrift ALREADY IN EVALUATION")
+                self._print("Drift ALREADY IN EVALUATION")
             self.choices.append(
                 {
                     "cont": self.cont + 1,

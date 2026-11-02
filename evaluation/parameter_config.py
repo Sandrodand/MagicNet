@@ -231,16 +231,18 @@ class Config:
     def create_base_cpnn(self, rnn=None):
         return self.base_learner[self._resolve_rnn(rnn)].get_cpnn()
 
-    def create_dynamic_cpnn(self, rnn=None):
+    def create_dynamic_cpnn(self, rnn=None, name=None):
         rnn = self._resolve_rnn(rnn)
         return DynamicCPNN(
             [self.base_learner[rnn].get_base_learner()],
             drift_window_batches=self.ensemble_batches[rnn],
+            name=f"DYNcPNN_{rnn}" if name is None else name,
         )
 
-    def _magic_parameters(self, rnn):
+    def _magic_parameters(self, rnn, default_name, name=None):
         rnn = self._resolve_rnn(rnn)
         return dict(
+            name=f"{default_name}_{rnn}" if name is None else name,
             device=self.device,
             seq_len=self.seq_len,
             input_size=self.num_features,
@@ -256,20 +258,32 @@ class Config:
             output_size=self.output_size,
         )
 
-    def create_magic_net(self, rnn=None):
-        return MagicNet(threshold_fn="sigmoid", multi_head=True, **self._magic_parameters(rnn))
+    def create_magic_net(self, rnn=None, name=None):
+        return MagicNet(
+            threshold_fn="sigmoid", multi_head=True,
+            **self._magic_parameters(rnn, "MAGIC_Net", name),
+        )
 
-    def create_multihead_crnn(self, rnn=None):
-        return MultiHeadCrnn(**self._magic_parameters(rnn))
+    def create_multihead_crnn(self, rnn=None, name=None):
+        return MultiHeadCrnn(**self._magic_parameters(rnn, "MultiHeadCRNN", name))
 
-    def create_magic_net_binary(self, rnn=None):
-        return MagicNet(threshold_fn="binarizer", multi_head=False, **self._magic_parameters(rnn))
+    def create_magic_net_binary(self, rnn=None, name=None):
+        return MagicNet(
+            threshold_fn="binarizer", multi_head=False,
+            **self._magic_parameters(rnn, "MAGIC_Net_binary_sh", name),
+        )
 
-    def create_magic_net_binary_mh(self, rnn=None):
-        return MagicNet(threshold_fn="binarizer", multi_head=True, **self._magic_parameters(rnn))
+    def create_magic_net_binary_mh(self, rnn=None, name=None):
+        return MagicNet(
+            threshold_fn="binarizer", multi_head=True,
+            **self._magic_parameters(rnn, "MAGIC_Net_binary_mh", name),
+        )
 
-    def create_magic_net_single_head(self, rnn=None):
-        return MagicNet(threshold_fn="sigmoid", multi_head=False, **self._magic_parameters(rnn))
+    def create_magic_net_single_head(self, rnn=None, name=None):
+        return MagicNet(
+            threshold_fn="sigmoid", multi_head=False,
+            **self._magic_parameters(rnn, "MAGIC_Net_sh", name),
+        )
 
     def create_learners(self, rnn_methods, stream_methods=()):
         """Bind each factory to its architecture; non-RNN methods are created once."""

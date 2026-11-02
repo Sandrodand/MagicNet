@@ -1,30 +1,28 @@
 from detectors.detector_simulator import DetectorSimulator
 from evaluation.cl_evaluation import EvaluateContinualLearning
-from evaluation.learner_config import LearnerConfig
 from evaluation.prequential_evaluation import EvaluatePrequential, make_dir
 import pandas as pd
 import sys
 import traceback
-from preprocessing.adaptive_standard_scaler import *
-from preprocessing.adaptive_minmax_scaler import *
 from evaluation.parameter_config import *
 from evaluation.default_parameters import *
-from models.cpnn.dynamic_cpnn import DynamicCPNN
 
 # __________________
 # PARAMETERS
 # __________________
 MODE = "local"
 # 'local' or 'aws'. If 'aws', the messages will be written in a specific txt file in the output_file dir
+#TODO
 PATHS = [
     f"datasets/{d}_{c}conf"
-    for c in range(1, 21)
-    for d in ["air_quality", "energy", "weather"]
+    for c in range(1, 2)
+    for d in ["weather"]
 ]  # a list containing the paths of the data streams (without the extension)
 PATH_PERFORMANCE = ""
 # the path in which to save the results. In the case of a relative path, the performance folder is automatically
 # created
-USE_DETECTOR = True
+#TODO
+USE_DETECTOR = False
 # True if you want to use a detector, False if you want to use the supervised drift information (the "task" column in
 # csv file)
 DETECTOR_SIMULATOR_PRECISION = 0.75
@@ -91,8 +89,8 @@ suffix = ""
 # Optional common output suffix. RNN types are distinguished by learner names.
 
 # LEARNERS
-RNN_LEARNERS = ["MAGIC_Net", "MultiHeadCRNN", "DYNcPNN"]
-# Other available names: cRNN, cPNN, MAGIC_Net_sh,
+RNN_LEARNERS = ["cRNN", "DYNcPNN", "MAGIC_Net", "MAGIC_Net_sh", "MAGIC_Net_binary_sh", "MAGIC_Net_binary_mh", "MultiHeadCRNN"]
+# Available names: cRNN, cPNN, DYNcPNN, MAGIC_Net, MAGIC_Net_sh, MAGIC_Net_binary_sh, MAGIC_Net_binary_mh, MultiHeadCRNN
 # MAGIC_Net_binary_sh, MAGIC_Net_binary_mh.
 STREAM_LEARNERS = []
 # Optional architecture-independent methods, created once: ARF, ARF_TA, HAT, HAT_TA.

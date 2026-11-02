@@ -15,7 +15,6 @@ from models.magic.activations import (
     CAP_VALUE,
 )
 
-from models.magic.checkpoint_compat import recurrent_checkpoint_state, legacy_argument
 
 DEFAULT_THRESHOLD = 5e-3
 
@@ -209,9 +208,6 @@ class ElementWiseRNN(nn.Module):
                     if values.shape != parameter.shape:
                         raise ValueError(f"Initial mask shape does not match {name}")
                     parameter.copy_(values.to(parameter))
-
-    def __setstate__(self, state):
-        super().__setstate__(recurrent_checkpoint_state(state))
 
     def forward(self, input):
         initial_state = self._initial_state(input)
@@ -455,17 +451,6 @@ class ElementWiseGRU(ElementWiseRNN):
     gate_names = ("reset", "update", "new")
     gate_count = len(gate_names)
 
-    def __init__(self, *args, GRU_weights=None, GRU_mask_weights=None, **kwargs):
-        if GRU_weights is not None:
-            kwargs["recurrent_weights"] = legacy_argument(
-                kwargs.get("recurrent_weights"), GRU_weights
-            )
-        if GRU_mask_weights is not None:
-            kwargs["recurrent_mask_weights"] = legacy_argument(
-                kwargs.get("recurrent_mask_weights"), GRU_mask_weights
-            )
-        super().__init__(*args, **kwargs)
-
     def _initial_state(self, input):
         self.hn = self._build_initial_state(input, self.h0)
         return self.hn
@@ -517,15 +502,12 @@ class ElementWiseLinear(nn.Module):
         threshold=5e-3,
         linear_mask_weights=None,
         linear_weights=None,
-        *,
-        Linear_mask_weights=None,
     ):
         super(ElementWiseLinear, self).__init__()
 
         self.in_features = in_features
         self.out_features = out_features
         self.frozen_mask_param = frozen_mask_param
-        linear_mask_weights = legacy_argument(linear_mask_weights, Linear_mask_weights)
         if isinstance(linear_mask_weights, (list, tuple)) and not linear_mask_weights:
             linear_mask_weights = None
         self.linear_mask_weights = (
@@ -565,9 +547,6 @@ class ElementWiseLinear(nn.Module):
             self.threshold_fn = Thresholder(function=threshold_fn)
             self.frozen_mask_param = CAP_VALUE
         self.initialize_piggymask(self.frozen_mask_param, self.linear_mask_weights)
-
-    def __setstate__(self, state):
-        super().__setstate__(recurrent_checkpoint_state(state))
 
     def reinit_piggymask(self, mask_param_init, freeze_masks=None, mask_params=None):
         if mask_params is not None:

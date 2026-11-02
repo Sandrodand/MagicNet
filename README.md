@@ -112,9 +112,8 @@ gates and a hidden state; LSTM uses input/forget/cell/output gates and hidden pl
 cell states. Mask application, freezing and expansion remain shared and use the
 declared gate count when copying parameter blocks. Historical mask padding uses
 the same metadata. Generic APIs use `base_learner_weights`,
-`recurrent_mask_weights` and `linear_mask_weights`; old attribute names are
-migrated only when loading previous checkpoints. Legacy GRU constructor aliases
-are confined to the GRU subclasses.
+`recurrent_mask_weights` and `linear_mask_weights`. Previous constructor aliases
+are not accepted, and old checkpoint attribute names are not migrated.
 
 Sigmoid weight masks always use `CappedSigmoid`; the `cap_sigmoid` option has
 been removed from constructors and experiment factories. Historical masks are
@@ -163,6 +162,12 @@ STREAM_LEARNERS = []  # Optional ARF, ARF_TA, HAT, HAT_TA; included once.
 preprocessing, label delay and detector remain common. All selected methods run
 in one prequential/CL evaluation, with names such as `MAGIC_Net_gru` and
 `MAGIC_Net_lstm`, receiving the same stream and detections.
+
+Diagnostic messages use each model's `name`: defaults are `MAGIC_Net`, `DYNcPNN`
+and `MultiHeadCRNN`. Experiment factories include the variant and architecture,
+for example `MAGIC_Net_binary_sh_lstm: cancels the grace period`. Constructors
+and factories accept a custom `name`; assigning `model.name` also updates MAGIC's
+manager so subsequent messages use the new identifier.
 
 `Config(base_rnn=BASE_RNN)` stores `hidden_size`, `hidden_mult`,
 `ensemble_batches`, `ensemble_th` and `base_learner` by RNN key. Factories accept

@@ -35,6 +35,7 @@ class MagicNet:
         manager_class=MagicManager,
         data_points_previous_concept=1000,
         minimum_k_difference=0.04,
+        name="MAGIC_Net",
         **kwargs,
     ):
         """
@@ -88,6 +89,8 @@ class MagicNet:
             Maximum number of labeled samples retained for the next forgetting check.
         minimum_k_difference: float, default: 0.04.
             Minimum Kappa advantage required to archive the pre-drift model after Ignore.
+        name: str, default: "MAGIC_Net".
+            Model identifier used in diagnostic messages.
         kwargs:
             Parameters of column_class.
         """
@@ -137,6 +140,7 @@ class MagicNet:
         self.checkpoint_freq = checkpoint_freq
 
         self.manager = manager_class(
+            name=name,
             ensemble_batches=ensemble_batches,
             input_size=input_size,
             threshold_fn=threshold_fn,
@@ -154,6 +158,14 @@ class MagicNet:
             minimum_k_difference=minimum_k_difference,
             **self.columns_args,
         )
+
+    @property
+    def name(self):
+        return self.manager.name
+
+    @name.setter
+    def name(self, value):
+        self.manager.name = value
 
     def get_seq_len(self):
         return self.seq_len

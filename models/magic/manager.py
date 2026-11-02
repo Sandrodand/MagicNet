@@ -16,6 +16,8 @@ class MagicManager(object):
     adaptation of the MAGIC Net architecture.
     """
 
+    name = "MAGIC_Net"
+
     def __init__(
         self,
         model_class=None,
@@ -41,6 +43,7 @@ class MagicManager(object):
         grace_period=None,
         data_points_previous_concept=1000,
         minimum_k_difference=0.04,
+        name="MAGIC_Net",
     ):
         """
         Parameters
@@ -93,7 +96,10 @@ class MagicManager(object):
             Maximum number of labeled samples used to check forgetting after Ignore.
         minimum_k_difference : float, default: 0.04
             Minimum additive Kappa advantage for retaining the pre-drift model.
+        name : str, default: "MAGIC_Net"
+            Model identifier used in diagnostic messages.
         """
+        self.name = name
         self.device = device
         self.model_class = model_class
         self.input_size = input_size
@@ -180,6 +186,12 @@ class MagicManager(object):
         self.mask_list[1] = self.model.create_freezemask()
 
         self.model_optim = self._create_optimizer(self.model)
+
+    def _print(self, *args, **kwargs):
+        if args:
+            print(f"{self.name}:", *args, **kwargs)
+        else:
+            print(**kwargs)
 
     def __setstate__(self, state):
         self.__dict__.update(state)
@@ -308,7 +320,7 @@ class MagicManager(object):
             self.ensemble_choices = sorted(
                 self.ensemble_choices, key=lambda x: x["data_point_counter"]
             )
-            print("MAGIC Net is already in expansion")
+            self._print("is already in expansion")
             return
 
         if self.in_grace_period:
@@ -324,7 +336,7 @@ class MagicManager(object):
             self.ensemble_choices = sorted(
                 self.ensemble_choices, key=lambda x: x["data_point_counter"]
             )
-            print("MAGIC Net is in grace period")
+            self._print("is in grace period")
             return
         self.ensemble_perf.append([])
 
@@ -436,7 +448,7 @@ class MagicManager(object):
 
     def _decide_best_model(self):
         for name, item in self.current_perf.items():
-            print(name, " performance: ", item)
+            self._print(name, " performance: ", item)
 
         non_expand_options = ["PiggyMask"]
         if self.ignore_option:
@@ -484,7 +496,7 @@ class MagicManager(object):
         self.ensemble_choices = sorted(
             self.ensemble_choices, key=lambda x: x["data_point_counter"]
         )
-        print("Magic Net choses: ", best_model)
+        self._print("chooses:", best_model)
         self.model = self.ensemble[best_model]
         self.model_optim = self.ensemble_optims[best_model]
         self.mask_list[self.curr_task_idx] = pickle.loads(
@@ -509,7 +521,7 @@ class MagicManager(object):
             if self.grace_period_counter >= self.grace_period:
                 self.grace_period_counter = 0
                 self.in_grace_period = False
-                print("MAGIC Net cancels the grace period")
+                self._print("cancels the grace period")
 
     def update_counter(self, counter, advance_grace_period=True):
         self.data_point_counter = counter
@@ -552,7 +564,7 @@ class MagicManager(object):
                 perf_epoch = self._fit_ensemble(x, y)
 
             if self.train_verbose:
-                print(
+                self._print(
                     "Task ",
                     self.curr_task_idx,
                     "Training epoch ",
@@ -570,8 +582,8 @@ class MagicManager(object):
                 perf_train[k].append(perf_epoch[k])
 
         if self.train_verbose:
-            print()
-            print()
+            self._print()
+            self._print()
         if self.in_expansion:
             self.ensemble_counter = self.ensemble_counter + 1
             self.ensemble_perf[-1].append(
@@ -668,7 +680,7 @@ class MagicManager(object):
                     mask = masks[key]
                     param.grad.data[mask.eq(0)] = 0
                 else:
-                    print(key)
+                    self._print(key)
 
     def predict_one(self, x, task_id=None, timestamp=-1):
         """

@@ -5,7 +5,6 @@ from math import log
 import torch
 import torch.nn as nn
 import models.magic.piggyback_layers as nl
-from models.magic.checkpoint_compat import recurrent_checkpoint_state
 
 
 class PiggyBackRNN(nn.Module):
@@ -165,9 +164,6 @@ class PiggyBackRNN(nn.Module):
             self.heads.to(self.device)
 
         self.classifier.to(self.device)
-
-    def __setstate__(self, state):
-        super().__setstate__(recurrent_checkpoint_state(state))
 
     def forward(self, input, task_id=None):
         """

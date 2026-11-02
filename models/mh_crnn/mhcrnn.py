@@ -15,7 +15,10 @@ class MultiHeadCrnn(MagicNet):
     states, can be saved and resumed with pickle, as for MagicNet.
     """
 
-    def __init__(self, model_class=cGRULinear, **kwargs):
+    def __init__(self, model_class=cGRULinear, name="MultiHeadCRNN", **kwargs):
         super().__init__(
-            model_class=model_class, manager_class=MultiHeadCrnnManager, **kwargs
+            model_class=model_class,
+            manager_class=MultiHeadCrnnManager,
+            name=name,
+            **kwargs,
         )
