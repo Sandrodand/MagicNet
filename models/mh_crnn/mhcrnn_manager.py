@@ -1,6 +1,7 @@
-"""MAGIC drift management without weight masks or hidden-size expansion."""
+"""MAGIC drift management for an unmasked recurrent backbone."""
 
 from copy import deepcopy
+from numbers import Integral
 
 import torch
 from river import metrics
@@ -31,7 +32,7 @@ class MultiHeadCrnnManager(MagicManager):
         base_learner_weights=None,
         output_size=2,
         ignore_option=True,
-        expand_option=True,
+        expand_option=False,
         checkpoint_freq=1500,
         drift_delay=3000,
         grace_period=5000,
@@ -39,12 +40,12 @@ class MultiHeadCrnnManager(MagicManager):
         data_points_previous_concept=1000,
         minimum_k_difference=0.04,
         name="MultiHeadCRNN",
+        freeze_backbone=True,
+        hidden_mult=None,
         **kwargs,
     ):
         if not multi_head:
-            raise ValueError("The head-only ablation requires multi_head=True")
-        if not ignore_option and not expand_option:
-            raise ValueError("At least one drift candidate must be enabled")
+            raise ValueError("MultiHeadCRNN requires multi_head=True")
         self.name = name
         self.device = device
         self.model_class = model_class
@@ -60,6 +61,7 @@ class MultiHeadCrnnManager(MagicManager):
         self.multi_head = True
         self.ignore_option = ignore_option
         self.expand_option = expand_option
+        self.freeze_backbone = freeze_backbone
         self.checkpoint_freq = checkpoint_freq
         self.drift_delay = drift_delay
         self.checkpoints = []
@@ -94,7 +96,22 @@ class MultiHeadCrnnManager(MagicManager):
             device=device,
             base_learner_weights=base_learner_weights,
         )
+        self.hidden_mult = (
+            max(1, self.model.hidden_size // 2) if hidden_mult is None else hidden_mult
+        )
+        if expand_option and (
+            not isinstance(self.hidden_mult, Integral) or self.hidden_mult <= 0
+        ):
+            raise ValueError("hidden_mult must be a positive integer for Expand")
         self.model_optim = self._create_optimizer(self.model)
+
+    def __setstate__(self, state):
+        super().__setstate__(state)
+        if "freeze_backbone" not in state:
+            # In older checkpoints Expand meant adding a head at fixed width.
+            self.freeze_backbone = True
+            self.expand_option = False
+            self.hidden_mult = max(1, self.model.hidden_size // 2)
 
     def _create_optimizer(self, model):
         return torch.optim.Adam(
@@ -110,7 +127,6 @@ class MultiHeadCrnnManager(MagicManager):
             # Reuse MAGIC's alarm logging; it returns before touching masks.
             return super().add_new_column(task_id)
 
-        ignore_model = deepcopy(self.model)
         self.previous_model_state = self.restore_previous_state()
         self.checkpoints = []
         self.curr_task_idx = task_id
@@ -119,14 +135,22 @@ class MultiHeadCrnnManager(MagicManager):
         self.ensemble_counter = 0
         self.ensemble_perf.append([])
 
-        if self.expand_option:
-            expand_model = deepcopy(self.previous_model_state)
-            expand_model.freeze_backbone()
-            expand_model.add_task_head(task_id)
-            self.ensemble["Expand"] = expand_model
         if self.ignore_option:
+            ignore_model = deepcopy(self.model)
             ignore_model.add_task_head(task_id, previous=True)
             self.ensemble["Ignore"] = ignore_model
+
+        source = self.previous_model_state if self.freeze_backbone else self.model
+        head_only = deepcopy(source)
+        if self.freeze_backbone:
+            head_only.freeze_backbone()
+        head_only.add_task_head(task_id)
+        self.ensemble["HeadOnly"] = head_only
+        if self.expand_option:
+            expanded = deepcopy(source)
+            expanded.expand_hidden(self.hidden_mult, self.freeze_backbone)
+            expanded.add_task_head(task_id)
+            self.ensemble["Expand"] = expanded
 
         self.current_perf = {name: metrics.CohenKappa() for name in self.ensemble}
         self.ensemble_optims = {
@@ -140,21 +164,24 @@ class MultiHeadCrnnManager(MagicManager):
             return
         for name, item in self.current_perf.items():
             self._print(name, " performance: ", item)
-        if "Ignore" not in self.ensemble:
-            best_model = "Expand"
-        elif "Expand" not in self.ensemble:
-            best_model = "Ignore"
-        elif self.current_perf["Expand"].get() > max(
-            self.current_perf["Ignore"].get(),
-            self.ensemble_th * self.current_perf["Ignore"].get(),
-        ):
-            best_model = "Expand"
-        else:
-            best_model = "Ignore"
+        alternatives = [name for name in ("Ignore", "HeadOnly") if name in self.ensemble]
+        best_model = max(
+            alternatives, key=lambda name: self.current_perf[name].get(), default="Expand"
+        )
+        if "Expand" in self.ensemble and best_model != "Expand":
+            best_kappa = self.current_perf[best_model].get()
+            if self.current_perf["Expand"].get() > max(
+                best_kappa, self.ensemble_th * best_kappa
+            ):
+                best_model = "Expand"
 
         retention = {}
         if best_model == "Ignore":
-            retention = self._maybe_archive_previous_model(self.ensemble[best_model])
+            current_model = self.ensemble[best_model]
+            retention = self._maybe_archive_previous_model(
+                current_model,
+                archive_backbone=self.freeze_backbone and not current_model.backbone_frozen,
+            )
         else:
             self.in_grace_period = (
                 self.grace_period is not None and self.grace_period > 0
@@ -194,6 +221,7 @@ class MultiHeadCrnnManager(MagicManager):
         outputs = model(x, task_id=self.curr_task_idx)
         loss = customized_loss(outputs, y, self.criterion, self.device)
         loss.backward()
+        model.zero_frozen_gradients()
         optimizer.step()
         with torch.no_grad():
             outputs = model(x, task_id=self.curr_task_idx)

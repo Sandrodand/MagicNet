@@ -251,21 +251,21 @@ class MagicManager(object):
                 score.update(y, pred)
         return score.get()
 
-    def _maybe_archive_previous_model(self, current_model):
+    def _maybe_archive_previous_model(self, current_model, archive_backbone=True):
         old_k = self._score_concept_model(
             self.previous_model_state, self.curr_task_idx - 1
         )
         current_k = self._score_concept_model(current_model, self.curr_task_idx)
         improvement = old_k - current_k
         retain = improvement > 0 and improvement >= self.minimum_k_difference
-        if retain:
+        if retain and archive_backbone:
             self.forgotten_models[self.curr_task_idx - 1] = pickle.loads(
                 pickle.dumps(self.previous_model_state)
             )
-        else:
+        elif not retain:
             self._discard_previous_task(current_model)
         return {
-            "old_model": retain,
+            "old_model": retain and archive_backbone,
             "old_model_k": old_k,
             "current_model_k": current_k,
             "previous_concept_sample_size": len(self.concept_y["old"]),
@@ -513,7 +513,13 @@ class MagicManager(object):
             )
             self.grace_period_counter = 0
         else:
-            retention = self._maybe_archive_previous_model(self.ensemble[best_model])
+            has_trainable_weights = any(
+                freeze_mask.eq(0).any().item()
+                for freeze_mask in self.ensemble_masks["Ignore"].values()
+            )
+            retention = self._maybe_archive_previous_model(
+                self.ensemble["Ignore"], archive_backbone=has_trainable_weights
+            )
 
         self.ensemble_choices.append(
             {

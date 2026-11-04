@@ -19,6 +19,19 @@ from models.magic.activations import (
 DEFAULT_THRESHOLD = 5e-3
 
 
+def _restore_mask_logits(values, activation, mask_param_init, inverse_sigmoid):
+    """Encode an effective historical mask for the layer's activation."""
+    if activation == "binarizer":
+        return torch.full_like(values, -mask_param_init).masked_fill_(
+            values == 1, mask_param_init
+        )
+    if activation == "ternarizer":
+        return values.clone()
+    if activation == "tanh":
+        return torch.atanh(values)
+    return inverse_sigmoid(values)
+
+
 def GRUBlockMath(
     input,
     hn,
@@ -240,41 +253,19 @@ class ElementWiseRNN(nn.Module):
         raise NotImplementedError
 
     def reinit_piggymask(self, mask_param_init, freeze_masks=None, mask_params=None):
-        if mask_params is not None:
-            if self.threshold_fn_name == "binarizer":
-                # Funzione per invertire la maschera binaria (0/1) in pesi latenti
-                def invert_bin(m):
-                    res = m.clone().fill_(-mask_param_init)  # i 0 diventano negativi
-                    res[m == 1] = mask_param_init  # gli 1 diventano positivi
-                    return res
-
-                self.mask_real_weight_ih = Parameter(
-                    invert_bin(mask_params["mask_real_weight_ih"])
-                )
-                self.mask_real_weight_hh = Parameter(
-                    invert_bin(mask_params["mask_real_weight_hh"])
-                )
-                self.mask_real_bias_ih_l0 = Parameter(
-                    invert_bin(mask_params["mask_real_bias_ih_l0"])
-                )
-                self.mask_real_bias_hh_l0 = Parameter(
-                    invert_bin(mask_params["mask_real_bias_hh_l0"])
-                )
-            else:
-                self.mask_real_weight_ih = Parameter(
-                    self.inverse_thresholder(mask_params["mask_real_weight_ih"])
-                )
-                self.mask_real_weight_hh = Parameter(
-                    self.inverse_thresholder(mask_params["mask_real_weight_hh"])
-                )
-                self.mask_real_bias_ih_l0 = Parameter(
-                    self.inverse_thresholder(mask_params["mask_real_bias_ih_l0"])
-                )
-                self.mask_real_bias_hh_l0 = Parameter(
-                    self.inverse_thresholder(mask_params["mask_real_bias_hh_l0"])
-                )
-        else:
+        if mask_params is None:
             self.initialize_piggymask(mask_param_init, freeze_masks=freeze_masks)
+            return
+
+        for name in self.mask_parameter_names:
+            key = "mask_real_" + name
+            logits = _restore_mask_logits(
+                mask_params[key],
+                self.threshold_fn_name,
+                mask_param_init,
+                self.inverse_thresholder,
+            )
+            setattr(self, key, Parameter(logits))
 
     def create_freezemask(self):
         """
@@ -549,23 +540,17 @@ class ElementWiseLinear(nn.Module):
         self.initialize_piggymask(self.frozen_mask_param, self.linear_mask_weights)
 
     def reinit_piggymask(self, mask_param_init, freeze_masks=None, mask_params=None):
-        if mask_params is not None:
-            if self.threshold_fn_name == "binarizer":
-
-                def invert_bin(m):
-                    res = m.clone().fill_(-mask_param_init)
-                    res[m == 1] = mask_param_init
-                    return res
-
-                self.mask_real_weight = Parameter(
-                    invert_bin(mask_params["mask_real_weight"])
-                )
-            else:
-                self.mask_real_weight = Parameter(
-                    self.inverse_thresholder(mask_params["mask_real_weight"])
-                )
-        else:
+        if mask_params is None:
             self.initialize_piggymask(mask_param_init, freeze_mask=freeze_masks)
+            return
+
+        logits = _restore_mask_logits(
+            mask_params["mask_real_weight"],
+            self.threshold_fn_name,
+            mask_param_init,
+            self.inverse_thresholder,
+        )
+        self.mask_real_weight = Parameter(logits)
 
     def reinit_linear_bias(self):
         if self.bias is not None:
