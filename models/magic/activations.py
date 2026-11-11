@@ -27,13 +27,14 @@ class BinarizerFunction(torch.autograd.Function):
         torch.Tensor
             Binarized output tensor.
         """
-        # Straight-through estimator: genera 1 se > threshold, altrimenti 0
+        # The forward pass produces 1 at or above the threshold and 0 otherwise.
         outputs = torch.zeros_like(inputs)
         outputs[inputs >= threshold] = 1.0
         return outputs
 
     @staticmethod
     def backward(ctx, grad_output):
+        """Pass the gradient straight through to the mask logits."""
         return grad_output, None
 
 
@@ -41,10 +42,12 @@ class Binarizer(nn.Module):
     """Binarizer {0, 1} a real-valued tensor."""
 
     def __init__(self, threshold=5e-3):
+        """Set the cutoff for producing an effective mask value of one."""
         super(Binarizer, self).__init__()
         self.threshold = threshold
 
     def forward(self, inputs):
+        """Convert logits to binary mask values using a straight-through gradient."""
         return BinarizerFunction.apply(inputs, self.threshold)
 
 
@@ -80,7 +83,7 @@ class TernarizerFunction(torch.autograd.Function):
 
     @staticmethod
     def backward(ctx, grad_output):
-        # Straight-through estimator: pass gradients through unchanged
+        """Pass the gradient straight through to the mask logits."""
         return grad_output, None  # None for the threshold
 
 
@@ -88,14 +91,17 @@ class Ternarizer(nn.Module):
     """Ternarizes {-1, 0, 1} a real-valued tensor."""
 
     def __init__(self, threshold=5e-3):
+        """Set the threshold magnitude used to form ternary mask values."""
         super(Ternarizer, self).__init__()
         self.threshold = threshold
 
     def forward(self, inputs):
+        """Convert logits to minus one, zero, or one with a straight-through gradient."""
         return TernarizerFunction.apply(inputs, self.threshold)
 
 
 def linear(input):
+    """Return the input tensor unchanged."""
     return input
 
 
@@ -103,10 +109,12 @@ class Thresholder(nn.Module):
     """
     Applies a thresholding or activation function to a real-valued tensor.
 
-    Supported functions include 'linear', 'sigmoid', 'relu', 'tanh', and 'ternarizer'.
+    Use 'linear', 'sigmoid' (capped), 'relu' (leaky), or 'tanh'.
+    Binary and ternary masks use Binarizer and Ternarizer directly.
     """
 
     def __init__(self, function="ternarizer"):
+        """Configure the activation for continuous mask logits."""
         super(Thresholder, self).__init__()
         self.threshold = 5e-3
         if function == "linear":
@@ -119,6 +127,7 @@ class Thresholder(nn.Module):
             self.threshold_fn = nn.Tanh()
 
     def forward(self, inputs):
+        """Apply the configured activation to the input logits."""
         return self.threshold_fn(inputs)
 
 
@@ -141,6 +150,7 @@ class CappedSigmoid(nn.Module):
         self.cap_value = float(cap_value)
 
     def forward(self, x: Tensor) -> Tensor:
+        """Apply sigmoid and return exactly one at or above the cap."""
         cap_tensor = torch.tensor(self.cap_value, dtype=x.dtype, device=x.device)
         ones = torch.ones_like(x)
         return torch.where(x.ge(cap_tensor), ones, torch.sigmoid(x))

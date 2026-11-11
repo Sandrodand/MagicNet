@@ -14,6 +14,7 @@ from evaluation.learner_config import LearnerConfig
 
 
 def make_dir(path):
+    """Create a directory and its parents if a path is supplied and it does not exist."""
     if path is not None:
         if not os.path.isdir(path):
             os.makedirs(path)
@@ -54,9 +55,9 @@ class EvaluatePrequential:
             If not None it indicates the number of data points to take from the data stream.
         batch_size: int, default: 128
             Reference batch size for rolling metric windows.
-        metrics: Iterable, default: ("accuracy", "kapp")
+        metrics: Iterable, default: ("accuracy", "kappa")
             The list of metrics to be computed. Available metrics: {'accuracy', 'kappa'}.
-        learners: List[LearnerConfig], default: ()
+        learners: List[LearnerConfig], default: None
             A list of LearnerConfig that contains the models able to learn from single data points.
             They must implement the method learn_one(x, y) and predict_one(x).
         data_stream: Callable, default: None.
@@ -92,6 +93,9 @@ class EvaluatePrequential:
             The number of timestamps of delay between the moment when the model receive feature vector X_t of
             the data point d_t and the moment when it receives the real label y_t. The original data stream contains
             both X_t and y_t in the same row. The class simulates the delay.
+        rolling_window_batches: list of int or None, default: [10, 50].
+            Rolling metric windows in minibatches, reset at supervised task
+            boundaries. Pass None to disable rolling metrics.
         """
 
         super().__init__()
@@ -137,6 +141,7 @@ class EvaluatePrequential:
         self._init_structure()
 
     def reset_checkpoints(self):
+        """Clear saved in-memory checkpoints for all learners and iterations."""
         for k in self.checkpoint:
             self.checkpoint[k] = [[] for i in range(0, self._iterations)]
 
@@ -266,47 +271,20 @@ class EvaluatePrequential:
             self._perf[model_name]["time"][iteration].append((end - start).microseconds)
 
     def _write_pickles(self, iteration=0, write_checkpoints=False):
-        if self.learners:
-            for i, m in enumerate(self.learners):
-                m_name = m.name.replace("_anytime", "").lower()
-                if m.magic:
+        for model in self.learners or []:
+            if model.magic or model.dyn_cpnn:
+                name = model.name.replace("_anytime", "").lower()
+                learner = self._eval[model.name + "_anytime"]["alg"][iteration]
+                source = learner.manager if model.magic else learner
+                choices = source.ensemble_choices if model.magic else source.choices
+                for prefix, values in (
+                    ("choices", choices), ("ensemble_perf", source.ensemble_perf)
+                ):
                     with open(
-                        os.path.join(
-                            self.path_write, f"choices_{m_name}{self.suffix}.pkl"
-                        ),
+                        os.path.join(self.path_write, f"{prefix}_{name}{self.suffix}.pkl"),
                         "wb",
-                    ) as f:
-                        pickle.dump(
-                            self._eval[self.learners[i].name + "_anytime"]["alg"][
-                                iteration
-                            ].manager.ensemble_choices,
-                            f,
-                        )
-                    with open(
-                        os.path.join(
-                            self.path_write, f"ensemble_perf_{m_name}{self.suffix}.pkl"
-                        ),
-                        "wb",
-                    ) as f:
-                        pickle.dump(
-                            self._eval[self.learners[i].name + "_anytime"]["alg"][
-                                iteration
-                            ].manager.ensemble_perf,
-                            f,
-                        )
-                if m.dyn_cpnn:
-                    with open(
-                        os.path.join(
-                            self.path_write, f"choices_{m_name}{self.suffix}.pkl"
-                        ),
-                        "wb",
-                    ) as f:
-                        pickle.dump(
-                            self._eval[self.learners[i].name + "_anytime"]["alg"][
-                                iteration
-                            ].choices,
-                            f,
-                        )
+                    ) as stream:
+                        pickle.dump(values, stream)
         with open(
             os.path.join(
                 self.path_write,
@@ -401,6 +379,14 @@ class EvaluatePrequential:
         - predictions{suffix}.pkl:
             A dict d where d['{name}_anytime'][it] contains the predictions
             made by the model during iteration 'it'.
+        - drifts{suffix}.pkl:
+            Detection timestamps by iteration.
+        - choices_{name}{suffix}.pkl and ensemble_perf_{name}{suffix}.pkl:
+            Drift decisions and per-candidate Kappa histories for MAGIC Net,
+            MultiHeadCRNN, and DYNcPNN. The histories include cumulative Kappa,
+            a rolling window of ten minibatches, and the selection window.
+        - checkpoints{suffix}_it{iteration}.pkl:
+            Task-boundary checkpoints when checkpoint writing is enabled.
         """
         if datastream is not None:
             self.data_stream = datastream

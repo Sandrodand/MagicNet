@@ -3,6 +3,7 @@ from typing import List
 from models.cpnn.cpnn import *
 import pickle
 from river import metrics
+from river import utils as river_utils
 import numpy as np
 import os
 import time
@@ -35,6 +36,7 @@ class SingleModel:
 
 
 class ModelEnsemble:
+    """Identify a cPNN column and whether it can train during a comparison."""
     def __init__(
         self,
         model: cPNN,
@@ -87,12 +89,14 @@ class ModelEnsemble:
 
 
 class DynamicCPNN:
+    """Adapt a progressive recurrent network by comparing drift candidates online."""
+
     name = "DYNcPNN"
 
     def __init__(
         self,
         models: List[cPNN],
-        drift_window_batches: int = 30,
+        drift_window_batches: int = None,
         grace_period: int = 5000,
         store_models: bool = True,
         max_models: int = 4,
@@ -101,49 +105,50 @@ class DynamicCPNN:
         verbose: bool = True,
         inference_ensemble_data_points: int = 500,
         name: str = "DYNcPNN",
+        ensemble_batches: int = 50,
+        selection_batches: int = 50,
     ):
-        """
-        It implements the Dynamic cPNN (DYNcPNN) model. The model starts with a single cPNN. After a drift detection,
-        it evaluates if the model can adapt to the new concept without adding a new column or not. To do so, it builds
-        an ensemble containing the cPNN that does not add a new column and the cPNN that adds it. After a configurable
-        number of data points, if the cPNN that does not add a new column performs worse it accepts the drift.
-        If store_models==True, in the case of drift rejection, it stores the model's associated with the old concept
-        when drift causes its forgetting. The stored models are added to the ensemble after a drift detection.
+        """Configure online drift adaptation and continual-learning inference.
 
         Parameters
         ----------
         models: list of cPNN.
             The initial cPNN models.
-        drift_window_batches: int, default: 50.
-            Number of training mini-batches at the end of which to choose whether accepting or rejecting the drift.
-        grace_period: int, default: 10k.
-            Number of data points following the last accepted drift in which the model does not take into consideration
-            new drifts.
+        ensemble_batches: int, default: 50.
+            Minibatches in a drift comparison.
+        selection_batches: int, default: 50.
+            Rolling minibatches used for online and final candidate selection.
+        drift_window_batches: int, default: None.
+            Legacy alias overriding ensemble_batches when supplied.
+        grace_period: int or None, default: 5000.
+            Suppress alarms at startup and for this many labeled points from the
+            detection of an accepted drift. Use 0 or None to disable suppression.
         store_models: bool, default: True.
-            Two situations could cause the rejection of a drift:
-            1) The model can adapt quickly to the new concept without adding a column.
-            2) The drift is not significant.
-            In the first case, when adapting to the new concept, the model may lose the predictive ability on the
-            previous. To avoid this situation, if store_models is set to True, we compare the performance
-            (on the previous concept) of the current model and the model stored before the drift. If the latter performs
-             better we save it into 'models' to not forget the previous concept.
+            After rejecting a drift, retain the rolled-back model if its Kappa
+            on the previous concept exceeds the adapted model's by the required margin.
         max_models: int, default: 4.
-            Maximum number of models to store in the case of store_models==True. The ones with higher last selection
-            timestamp are selected.
+            Maximum pool size, including the active model. Keep the most recently
+            selected models.
         data_points_previous_concept: int, default: 1000.
             In the case of store_models==True, it represents the number of data points of the previous concept to use
             to evaluate if the concept preceding the rejected drift is forgotten or not.
         minimum_k_difference: float, default: 0.04.
-            Minimum difference in Cohen's K values between the best model in the ensemble and the model that does not
-            add a column to accept drift.
+            Minimum additive Kappa advantage for accepting a new column or
+            retaining a rolled-back model after drift rejection.
         verbose: bool, default: True.
             If True, it prints the messages regarding the acceptance or rejection of the drifts.
         name: str, default: "DYNcPNN".
             Model identifier used in diagnostic messages.
-        inference_ensemble_data_points: int, default: 2*128.
+        inference_ensemble_data_points: int, default: 500.
             Number of data points after which to choose the best model in the ensemble during the inference mode.
             Use -1 to keep the ensemble during the entire inference phase.
         """
+        if not isinstance(selection_batches, int) or selection_batches <= 0:
+            raise ValueError("selection_batches must be a positive integer")
+        self.selection_batches = selection_batches
+        self.ensemble_batches = (
+            ensemble_batches if drift_window_batches is None else drift_window_batches
+        )
         self.name = name
         self.models = [
             SingleModel(m, timestamp=time.time() - i) for i, m in enumerate(models)
@@ -156,7 +161,9 @@ class DynamicCPNN:
         # >=0 number of data points following the currently evaluating drift.
         self.data_points_previous_concept = data_points_previous_concept
         self.predictions = {}
-        self.drift_window = drift_window_batches * self.ensemble[0].model.batch_size
+        self.drift_window = self.ensemble_batches * self.ensemble[0].model.batch_size
+        self.ensemble_perf = []
+        self._reset_rolling_metrics()
         self.grace_period = grace_period
         self.grace_period_cont = 0 if grace_period else -1
         self.cont = 0
@@ -180,6 +187,51 @@ class DynamicCPNN:
         self.last_ts_predict = -1
         self.last_ts_train = -1
 
+    def _reset_rolling_metrics(self):
+        batch_size = self.ensemble[0].model.batch_size
+        self.rolling_metrics = [
+            river_utils.Rolling(metrics.CohenKappa(), window_size=10 * batch_size)
+            for _ in self.ensemble
+        ]
+        self.selection_metrics = [
+            river_utils.Rolling(
+                metrics.CohenKappa(), window_size=self.selection_batches * batch_size
+            )
+            for _ in self.ensemble
+        ]
+
+    def __setstate__(self, state):
+        self.__dict__.update(state)
+        self.__dict__.setdefault("selection_batches", 50)
+        self.__dict__.setdefault(
+            "ensemble_batches", self.drift_window // self.ensemble[0].model.batch_size
+        )
+        self.__dict__.setdefault("ensemble_perf", [])
+        if "selection_metrics" not in state:
+            self._reset_rolling_metrics()
+            if self.drift_cont >= 0:
+                self.ensemble_perf.append([])
+
+    def _record_ensemble_performance(self):
+        names_by_type = {-1: "Ignore", 0: "Expand"}
+        names = [
+            names_by_type.get(
+                candidate.model_type,
+                f"Pool_{candidate.model_idx}_column_{candidate.column}",
+            )
+            for candidate in self.ensemble
+        ]
+        self.ensemble_perf[-1].append(
+            {
+                key: {name: metric.get() for name, metric in zip(names, values)}
+                for key, values in (
+                    ("cumulative", self.metrics),
+                    ("rolling_10mb", self.rolling_metrics),
+                    ("selection_rolling", self.selection_metrics),
+                )
+            }
+        )
+
     def _print(self, *args, **kwargs):
         if args:
             print(f"{self.name}:", *args, **kwargs)
@@ -187,20 +239,12 @@ class DynamicCPNN:
             print(**kwargs)
 
     def learn_one(self, x, y, timestamp=-1):
-        """
-        It trains DYNcPNN on a single data point. On each cPNN, the training is performed after filling up a mini-batch
-        of data points. During the drift_window_batches mini-batches following the drift detection, it trains all the
-        cPNNs in the ensemble and updates the best-performing one using the prediction made during the last predict_one
-        call.
+        """Score the prediction at timestamp and train with the labeled point.
 
-        Parameters
-        ----------
-        x: numpy.array or list
-            The features values of the single data point.
-        y: int
-            The target value of the single data point.
-        timestamp: int, default: -1
-            The timestamp associated with the data point. Use -1 in case of no delay.
+        Each trainable candidate receives x and y during a comparison.
+        The comparison lasts ensemble_batches minibatches. Its online and
+        final selection use rolling Kappa over selection_batches minibatches.
+        Use -1 for immediate prediction and label pairs.
         """
         if self.inference:
             return
@@ -222,13 +266,18 @@ class DynamicCPNN:
         if timestamp in self.predictions:
             for i in range(len(self.ensemble)):
                 if self.drift_cont > -1:
-                    self.metrics[i].update(y, self.predictions[timestamp][i])
+                    prediction = self.predictions[timestamp][i]
+                    self.metrics[i].update(y, prediction)
+                    self.rolling_metrics[i].update(y, prediction)
+                    self.selection_metrics[i].update(y, prediction)
         for i in range(len(self.ensemble)):
             if self.ensemble[i].train:
                 self.ensemble[i].model.learn_one(x, y, timestamp=timestamp)
         if self.drift_cont > -1:
-            ks = [m.get() for m in self.metrics]
+            ks = [m.get() for m in self.selection_metrics]
             self.selected = np.argmax(ks)
+            if self.drift_cont % self.ensemble[0].model.batch_size == 0:
+                self._record_ensemble_performance()
             if self.drift_cont >= self.drift_window:
                 self.force_decision()
         self.cont += 1
@@ -236,10 +285,15 @@ class DynamicCPNN:
             del self.predictions[timestamp]
 
     def force_decision(self):
-        """Resolve an active comparison using the candidate metrics collected so far."""
+        """Resolve a pending comparison using the current selection-window Kappa.
+
+        Apply minimum_k_difference against Ignore before committing to
+        expansion. When Ignore wins, use the previous concept sample for
+        the optional forgetting check.
+        """
         if self.inference or self.drift_cont < 0:
             return
-        ks = [m.get() for m in self.metrics]
+        ks = [m.get() for m in self.selection_metrics]
         self.selected = int(np.argmax(ks))
         if ks[self.selected] - ks[0] < self.minimum_k_difference:
             self.selected = 0
@@ -354,6 +408,8 @@ class DynamicCPNN:
         self.choices = sorted(self.choices, key=lambda c: c["cont"])
         self.predictions = {}
         self.selected = 0
+        self.rolling_metrics = []
+        self.selection_metrics = []
         self.drift_cont = -1
         self.old_model = None
 
@@ -364,20 +420,11 @@ class DynamicCPNN:
         return model
 
     def predict_one(self, x, timestamp=-1):
-        """
-        It performs prediction on a single data point. During the drift_window_batches mini-batches following the
-        drift detection, it returns the prediction of the current best-performing model in the ensemble.
+        """Predict a label for x using the currently selected candidate.
 
-        Parameters
-        ----------
-        x: numpy.array or list
-           The features values of the single data point.
-        timestamp: int, default: -1.
-            The timestamp associated with the data point. Use -1 in case of no delay between test and train.
-        Returns
-        -------
-        prediction : int
-           The predicted int label of x.
+        Cache all candidate labels under timestamp for the matching label
+        update. Use -1 for immediate prediction and label pairs. Recurrent
+        warm-up produces class zero.
         """
         self.last_ts_predict = timestamp
         self.predictions[timestamp] = []
@@ -478,6 +525,8 @@ class DynamicCPNN:
             )
             self.predictions = {}
             self.metrics = [metrics.CohenKappa() for _ in self.ensemble]
+            self._reset_rolling_metrics()
+            self.ensemble_perf.append([])
             if self.store_models:
                 self.concept_x["old"] = self.concept_x["new"].copy()
                 self.concept_x["new"].clear()
@@ -487,18 +536,12 @@ class DynamicCPNN:
             self.selected = 0
 
     def inference_mode(self, mode: bool = True):
-        """
-        Call this method before running the model in inference mode or after the end of the inference mode to recover
-        the training mode. The attribute inference_mode indicates if the model is in inference mode or not.
-        During the inference mode it builds an ensemble that considers all the columns of all the models within the
-        ensemble and the pool. On the i-th data point of the test set, it considers the prediction made by the
-        best-performing model from the first data point of the test set to the (i-1)-th.
-        After self.inference_ensemble_data_points data points it chooses the best model in the ensemble.
+        """Enable task-agnostic continual-learning inference on a checkpoint copy.
 
-        Parameters
-        ----------
-        mode: bool, default: True.
-            True if you want to activate the inference mode. False if you want di deactivate it.
+        Compare all retained columns, starting with the active model's latest
+        column. Use update_inference to select a column as labels arrive.
+        Pass False to restore the online ensemble, metrics, context, and
+        pending predictions.
         """
         if self.inference and not mode:
             self.ensemble = self._ensemble_old
@@ -558,16 +601,10 @@ class DynamicCPNN:
         self.inference = mode
 
     def update_inference(self, y, timestamp=-1):
-        """
-        Call this method during the inference mode to input the model the label of the previous data point.
+        """Match a label to its prediction timestamp and update column selection.
 
-        Parameters
-        ----------
-        y: int
-            The label of the data point.
-        timestamp: int, default: -1.
-            The timestamp associated with the data point (in the case of delayed labels). Use -1 if there is no delay
-            between Xt and yt and the label refers to the current data point.
+        Use -1 when features and labels arrive together. Once the configured
+        number of label updates is reached, keep only the selected column.
         """
         if timestamp in self.predictions:
             for p, m in zip(self.predictions[timestamp], self.metrics):
@@ -603,7 +640,9 @@ class DynamicCPNN:
                 model.reset_previous_data_points()
 
     def get_seq_len(self):
+        """Return the sequence length of the active cPNN."""
         return self.ensemble[0].model.get_seq_len()
 
     def get_size(self):
+        """Return the current size-reporting placeholder, which is always 1."""
         return 1

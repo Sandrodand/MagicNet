@@ -1,4 +1,5 @@
 from river import metrics
+from river import utils as river_utils
 import pickle
 
 from evaluation.evaluation_utils import compute_model_size
@@ -22,7 +23,7 @@ class MagicManager(object):
         self,
         model_class=None,
         device=None,
-        ensemble_batches=30,
+        ensemble_batches=50,
         lr=0.01,
         input_size=4,
         batch_size: int = 128,
@@ -44,6 +45,7 @@ class MagicManager(object):
         data_points_previous_concept=1000,
         minimum_k_difference=0.04,
         name="MAGIC_Net",
+        selection_batches=40,
     ):
         """
         Parameters
@@ -52,9 +54,11 @@ class MagicManager(object):
             Architecture inferred from the base learner, defaulting to PiggyBackGRU.
         device : str, default: None
             The processing device ('cpu' or 'cuda').
-        ensemble_batches : int, default: 30
+        ensemble_batches : int, default: 50
             The number of batches to wait before choosing the best model from the ensemble
             after a drift detection.
+        selection_batches : int, default: 40
+            Rolling minibatches used for online and final candidate selection.
         lr : float, default: 0.01
             Learning rate for the optimizer.
         input_size : int, default: 4
@@ -74,9 +78,9 @@ class MagicManager(object):
         hidden_mult : int, default: None
             Number of units to add during architectural expansion (accommodation).
         ensemble_th : float, default: 1.05
-            Performance threshold multiplier; expansion is chosen if its performance
-            is greater than mask-only performance multiplied by this factor.
-        base_learner_weights : dict, default: None
+            Expand must exceed both the best non-expansion Kappa and that score
+            multiplied by this factor.
+        base_learner_weights : cPNN, cGRULinear, or cLSTMLinear, optional
             Pre-initialized weights to inject into the base learner.
         output_size : int, default: 2
             Number of output classes.
@@ -116,7 +120,7 @@ class MagicManager(object):
         self.checkpoints = []
         self.grace_period = grace_period
         self.previous_piggy = False
-        # Consider PiggyMask_last only after the first PiggyMask choice
+        # Enable Mask-Last after the first accepted adaptation.
 
         self.threshold_fn = threshold_fn
         self.drift_delay = drift_delay
@@ -125,6 +129,9 @@ class MagicManager(object):
         self.ensemble = {}
         self.ensemble_masks = {}
         self.ensemble_optims = {}
+        if not isinstance(selection_batches, int) or selection_batches <= 0:
+            raise ValueError("selection_batches must be a positive integer")
+        self.selection_batches = selection_batches
         self.ensemble_batches = ensemble_batches
         self.ensemble_counter = 0
         self.ensemble_th = ensemble_th
@@ -134,6 +141,8 @@ class MagicManager(object):
         self.output_size = output_size
 
         self.current_perf = {}
+        self.current_perf_rolling = {}
+        self.selection_perf = {}
         self.in_expansion = False
         self.piggymask_list = {}  # Piggymasks of previous tasks
         self.mask_list = {}  # Masks used for freezing parameters
@@ -205,6 +214,37 @@ class MagicManager(object):
         self.__dict__.setdefault("concept_x", {"old": [], "new": []})
         self.__dict__.setdefault("concept_y", {"old": [], "new": []})
         self.__dict__.setdefault("historical_heads", {})
+        self.__dict__.setdefault("selection_batches", 25)
+        if "selection_perf" not in state:
+            self.selection_perf = self._new_rolling_metrics(self.selection_batches)
+            for comparison in self.ensemble_perf:
+                for point in comparison:
+                    if "cumulative" in point:
+                        point["rolling_10mb"] = point.pop(
+                            "rolling", point.get("rolling_10mb", {})
+                        )
+                        point.setdefault("selection_rolling", {})
+        if "current_perf_rolling" not in state:
+            self._reset_rolling_metrics()
+            # Older logs contain only cumulative Kappa. Rolling history cannot
+            # be reconstructed without the original predictions and labels.
+            for comparison in self.ensemble_perf:
+                for i, point in enumerate(comparison):
+                    comparison[i] = {
+                        "cumulative": point, "rolling_10mb": {}, "selection_rolling": {}
+                    }
+
+    def _new_rolling_metrics(self, batches):
+        return {
+            name: river_utils.Rolling(
+                metrics.CohenKappa(), window_size=batches * self.batch_size
+            )
+            for name in self.current_perf
+        }
+
+    def _reset_rolling_metrics(self):
+        self.current_perf_rolling = self._new_rolling_metrics(10)
+        self.selection_perf = self._new_rolling_metrics(self.selection_batches)
 
     def _initialize_concept_memory(
         self, data_points_previous_concept, minimum_k_difference
@@ -216,6 +256,7 @@ class MagicManager(object):
         self.historical_heads = {}
 
     def collect_concept_sample(self, x, y):
+        """Keep a labeled point in the bounded sample for the next forgetting check."""
         if len(self.concept_x["new"]) < self.data_points_previous_concept:
             self.concept_x["new"].append(np.asarray(x).copy())
             self.concept_y["new"].append(int(y))
@@ -304,6 +345,7 @@ class MagicManager(object):
         return sorted(task_ids)
 
     def restore_historical_head(self, task_id):
+        """Restore the saved head for task_id when a multi-head snapshot exists."""
         if self.multi_head and task_id in self.historical_heads:
             self.model.heads[str(task_id)] = pickle.loads(
                 pickle.dumps(self.historical_heads[task_id])
@@ -313,6 +355,10 @@ class MagicManager(object):
         return torch.optim.Adam(model.parameters(), lr=self.lr)
 
     def store_masks_biases(self):
+        """Resolve a pending comparison and store the active task's masks.
+
+        For single-head models, store the classifier bias alongside the masks.
+        """
         if self.in_expansion:
             self._decide_best_model()
 
@@ -329,16 +375,12 @@ class MagicManager(object):
             self._decide_best_model()
 
     def add_new_column(self, task_id):
-        """
-        Triggers the drift adaptation mechanism (ensemble phase).
+        """Build the candidates for an eligible drift notification.
 
-        It freezes current weights, stores the past configuration, and spawns
-        ensemble candidates (Mask, Expand, Ignore) to handle the new concept.
-
-        Parameters
-        ----------
-        task_id : int
-            The identifier for the new concept/task.
+        Mask and Expand candidates use the rollback snapshot, while Ignore
+        continues from the current weights. Retain the previous task's
+        historical configuration. task_id identifies the new consecutive
+        task. An active comparison or grace period suppresses the notification.
         """
         # Freeze past by setting freeze masks to 1s
         if self.in_expansion:
@@ -434,7 +476,7 @@ class MagicManager(object):
                 self.ensemble["Expand"]
             )
 
-        # From the third concept the ensemble is enlarged based on the mode chosen
+        # Include Mask-Last once an adaptation has been accepted.
 
         if self.previous_piggy:
             backbone_piggy_last.reinit_newly_frozen_masks(ignore_masks)
@@ -459,10 +501,16 @@ class MagicManager(object):
         for model in self.ensemble.values():
             model.to(self.device)
 
+        self._reset_rolling_metrics()
         self.last_pred = {}
         self.pending_predictions = {}
 
     def get_previous_state(self):
+        """Return a copy of the most recent snapshot eligible for rollback.
+
+        The cutoff is the current labeled-point counter minus drift_delay.
+        Use a copy of the active network when no snapshot meets the cutoff.
+        """
         if len(self.checkpoints) > 0:
             models = [
                 sc
@@ -476,12 +524,16 @@ class MagicManager(object):
         return pickle.loads(pickle.dumps(self.model))
 
     def force_decision(self):
+        """Resolve a pending drift comparison using the current selection-window Kappa.
+
+        The normal acceptance thresholds and historical retention rules apply.
+        """
         if not self.in_expansion:
             return
         self._decide_best_model()
 
     def _decide_best_model(self):
-        for name, item in self.current_perf.items():
+        for name, item in self.selection_perf.items():
             self._print(name, " performance: ", item)
 
         non_expand_options = []
@@ -490,14 +542,14 @@ class MagicManager(object):
         non_expand_options.append("PiggyMask")
         if self.previous_piggy:
             non_expand_options.append("PiggyMask_last")
-        bestpiggy = max(non_expand_options, key=lambda k: self.current_perf[k].get())
+        bestpiggy = max(non_expand_options, key=lambda k: self.selection_perf[k].get())
 
         if self.expand_option:
             expand_options = ["Expand"]
-            bestexpand = max(expand_options, key=lambda k: self.current_perf[k].get())
-            if self.current_perf[bestexpand].get() > max(
-                self.current_perf[bestpiggy].get(),
-                self.ensemble_th * self.current_perf[bestpiggy].get(),
+            bestexpand = max(expand_options, key=lambda k: self.selection_perf[k].get())
+            if self.selection_perf[bestexpand].get() > max(
+                self.selection_perf[bestpiggy].get(),
+                self.ensemble_th * self.selection_perf[bestpiggy].get(),
             ):
                 best_model = bestexpand
             else:
@@ -528,7 +580,7 @@ class MagicManager(object):
                 - self.ensemble_batches * self.batch_size,
                 "choice": best_model,
                 "final_perf": {
-                    k: self.current_perf[k].get() for k in self.current_perf
+                    k: self.selection_perf[k].get() for k in self.current_perf
                 },
                 "chosen_model_size": compute_model_size(self.ensemble[best_model]),
                 **retention,
@@ -553,10 +605,13 @@ class MagicManager(object):
         self.ensemble_masks = {}
         self.ensemble_optims = {}
         self.current_perf = {}
+        self.current_perf_rolling = {}
+        self.selection_perf = {}
         self.last_pred = {}
         self.pending_predictions = {}
 
     def manage_grace_period(self):
+        """Advance the active grace period by one labeled observation."""
         if self.in_grace_period:
             self.grace_period_counter += 1
             if self.grace_period_counter >= self.grace_period:
@@ -565,6 +620,11 @@ class MagicManager(object):
                 self._print("cancels the grace period")
 
     def update_counter(self, counter, advance_grace_period=True):
+        """Record the labeled-point counter and save a checkpoint when due.
+
+        advance_grace_period controls whether this point counts toward the
+        grace period.
+        """
         self.data_point_counter = counter
         if self.checkpoint_freq is not None and not self.in_expansion:
             if self.data_point_counter % self.checkpoint_freq == 0:
@@ -573,23 +633,12 @@ class MagicManager(object):
             self.manage_grace_period()
 
     def train(self, x, y):
-        """
-        Executes a training step on a given mini-batch. If the model is in expansion mode,
-        it trains the entire ensemble in parallel.
+        """Train the active model or all drift candidates on one minibatch.
 
-        Parameters
-        ----------
-        x : torch.Tensor
-            Batch input features tensor.
-        y : torch.Tensor
-            Batch target labels tensor.
-
-        Returns
-        -------
-        dict
-            Dictionary containing historical training metrics across epochs
-            (accuracy, loss, kappa).
-
+        x contains recurrent sequences and y contains their targets. Run
+        train_epochs optimizer steps and return per-epoch training metrics.
+        During a comparison, also log prequential candidate Kappa scores and
+        resolve the comparison when ensemble_batches minibatches are complete.
         """
         perf_train = {
             "accuracy": [],
@@ -628,7 +677,18 @@ class MagicManager(object):
         if self.in_expansion:
             self.ensemble_counter = self.ensemble_counter + 1
             self.ensemble_perf[-1].append(
-                {k: self.current_perf[k].get() for k in self.current_perf}
+                {
+                    "cumulative": {
+                        name: metric.get() for name, metric in self.current_perf.items()
+                    },
+                    "rolling_10mb": {
+                        name: metric.get()
+                        for name, metric in self.current_perf_rolling.items()
+                    },
+                    "selection_rolling": {
+                        name: metric.get() for name, metric in self.selection_perf.items()
+                    },
+                }
             )
             if self.ensemble_counter == self.ensemble_batches:
                 self._decide_best_model()
@@ -636,6 +696,7 @@ class MagicManager(object):
         return perf_train
 
     def save_checkpoint(self):
+        """Save the active network in the bounded rollback history when enabled."""
         if self.checkpoint_freq is not None:
             self.checkpoints.append(
                 {
@@ -702,8 +763,11 @@ class MagicManager(object):
         return perf_train
 
     def delete_gradients(self, model, masks):
-        """
-        It sets the computed gradient for previous parameters of a given model to 0, effectively freezing them.
+        """Zero gradients for frozen parameters before the optimizer step.
+
+        masks marks frozen shared weights with nonzero entries. The
+        corresponding mask parameters can learn on those entries. The mask
+        parameters associated with trainable weights stay fixed.
         """
         if not masks:
             return
@@ -724,9 +788,11 @@ class MagicManager(object):
                     self._print(key)
 
     def predict_one(self, x, task_id=None, timestamp=-1):
-        """
-        Computes the model's prediction on the given input. If MAGIC Net is in ensemble phase it returns the prediction
-        of the current best-performing model.
+        """Return logits for an input sequence and record candidate labels.
+
+        task_id defaults to the current task. During a comparison, choose
+        the online candidate by selection-window Kappa and cache each
+        candidate's predicted label under timestamp.
         """
         if task_id is None:
             task_id = self.curr_task_idx
@@ -744,7 +810,10 @@ class MagicManager(object):
             for name, pred in self.last_pred.items()
         }
 
-        best_model = max(zip(self.current_perf.values(), self.current_perf.keys()))[1]
+        best_model = max(
+            self.selection_perf,
+            key=lambda name: (self.selection_perf[name].get(), name == "Ignore"),
+        )
         pred = self.last_pred[best_model]
 
         return pred
@@ -752,11 +821,19 @@ class MagicManager(object):
     def update_metrics(self, y, timestamp=-1):
         # Labels for pre-drift points or sequence warm-up have no candidate
         # prediction. Popping also prevents scoring the same label twice.
+        """Score the cached prediction for timestamp against label y.
+
+        Update cumulative Kappa, the ten-minibatch rolling Kappa, and the
+        selection-window rolling Kappa. A timestamp is consumed once.
+        """
         predictions = self.pending_predictions.pop(timestamp, {})
         for name, pred in predictions.items():
             self.current_perf[name].update(y, pred)
+            self.current_perf_rolling[name].update(y, pred)
+            self.selection_perf[name].update(y, pred)
 
     def get_state_dict(self):
+        """Return the active network's state dictionary outside a drift comparison."""
         if self.in_expansion is False:
             return self.model.state_dict()
         else:

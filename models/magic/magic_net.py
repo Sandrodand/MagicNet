@@ -5,9 +5,7 @@ from models.magic.manager import *
 
 
 class MagicNet:
-    """
-    Class that implements all the MAGIC Net structure.
-    """
+    """Online recurrent classifier that adapts to drift with masks and expansion."""
 
     def __init__(
         self,
@@ -23,7 +21,7 @@ class MagicNet:
         threshold_fn="sigmoid",
         hidden_size=25,
         hidden_mult=None,
-        ensemble_batches=30,
+        ensemble_batches=50,
         ensemble_th=1.05,
         base_learner_weights=None,
         multi_head=True,
@@ -36,13 +34,16 @@ class MagicNet:
         data_points_previous_concept=1000,
         minimum_k_difference=0.04,
         name="MAGIC_Net",
+        selection_batches=40,
         **kwargs,
     ):
         """
         Parameters
         ----------
 
-        model_class: default: None.
+        input_size: int, default: 4.
+            Number of features per data point.
+        model_class: class, default: None.
             Masked recurrent architecture. Inferred from the base learner, or GRU
             when no base learner is supplied. Accepts PiggyBackGRU/PiggyBackLSTM.
         device: default: None.
@@ -64,25 +65,35 @@ class MagicNet:
             associated with the first W-1 data points following the detected drift.
         threshold_fn: str, default: "sigmoid".
             The function to transform the real-weighted masks before applying them on the weights.
-            Functions can be "binarizer", "ternarizer, "sigmoid", "tanh".
+            Functions can be "binarizer", "ternarizer", "sigmoid", "tanh".
         hidden_size: int, default: 25.
             The starting hidden size of the model's cRNN.
         hidden_mult: int, default: None.
             Number of neurons added during expansion. None uses half the actual
             backbone hidden size, including when loaded from a shared base learner.
-        ensemble_batches: int, default: 30.
+        ensemble_batches: int, default: 50.
             The number of batches used to train the model after a drift before choosing which option in the ensemble
             to keep.
+        selection_batches: int, default: 40.
+            Rolling minibatches used for online and final candidate selection.
         ensemble_th: float, default: 1.05.
-            The factor by which the expansion options need to outperform the mask only ones in order to be chosen.
-            Example: If the mask only option obtains a kappa score of 60%, the expansion one has to obtain
-            more than 63% to be selected.
-        ensemble_mode: str, default: "last".
-            This parameter defines how transfer learning is injected in the ensemble. "classic": no transfer learning;
-            "last": the ensemble contains two extra options that use the previous piggymasks instead of randomly
-            initialized ones.
-        base_learner_weights: dict of tensors, default: None.
-            Used to pass pre-initialized weights to the cRNN. If None they are initialized as usual
+            Expand must exceed both the best non-expansion Kappa and that score
+            multiplied by this factor.
+        base_learner_weights: cPNN, cGRULinear, or cLSTMLinear, optional.
+            Reuse the recurrent weights and classifier of a pretrained learner.
+        multi_head: bool, default: True.
+            Use a separate linear head for each retained task.
+        ignore_option: bool, default: True.
+            Include the candidate that continues training without adapting the architecture.
+        expand_option: bool, default: True.
+            Include the candidate that increases the recurrent hidden size.
+        checkpoint_freq: int, default: 500.
+            Interval in labeled data points between rollback snapshots.
+        drift_delay: int, default: 1500.
+            Offset in data points used to look up a pre-drift snapshot.
+        grace_period: int, default: 5000.
+            Number of labeled points for which drift alarms are suppressed at startup
+            and after accepting an adaptation.
         manager_class: class, default: MagicManager.
             Lifecycle manager. The head-only ablation supplies its own manager.
         data_points_previous_concept: int, default: 1000.
@@ -92,7 +103,7 @@ class MagicNet:
         name: str, default: "MAGIC_Net".
             Model identifier used in diagnostic messages.
         kwargs:
-            Parameters of column_class.
+            Additional keyword arguments passed to the lifecycle manager, such as output_size.
         """
         if "initial_task_id" in kwargs:
             raise TypeError(
@@ -117,6 +128,7 @@ class MagicNet:
         self.columns_args["seq_len"] = seq_len
         self.columns_args["model_class"] = model_class
         self.ensemble_batches = ensemble_batches
+        self.selection_batches = selection_batches
         self.ensemble_th = ensemble_th
 
         self.seq_len = seq_len
@@ -142,6 +154,7 @@ class MagicNet:
         self.manager = manager_class(
             name=name,
             ensemble_batches=ensemble_batches,
+            selection_batches=selection_batches,
             input_size=input_size,
             threshold_fn=threshold_fn,
             hidden_size=hidden_size,
@@ -161,13 +174,16 @@ class MagicNet:
 
     @property
     def name(self):
+        """Return the model name used in diagnostic output."""
         return self.manager.name
 
     @name.setter
     def name(self, value):
+        """Set the model name used in diagnostic output."""
         self.manager.name = value
 
     def get_seq_len(self):
+        """Return the number of observations in a recurrent input window."""
         return self.seq_len
 
     def _cut_in_sequences(self, x, y):
@@ -244,23 +260,13 @@ class MagicNet:
         previous_data_points: np.array = None,
         timestamp: int = -1,
     ):
-        """
-        It trains Magic Net on a single data point. The training is performed after filling
-        up a mini_batch containing batch_size data points.
+        """Buffer one labeled observation and train when the minibatch is full.
 
-        Parameters
-        ----------
-        x: numpy.array or list
-            The features values of the single data point.
-        y: int
-            The target value of the single data point.
-        previous_data_points: numpy.array, default: None.
-            The features value of the data points preceding x in the sequence.
-            If None, it uses the last seq_len-1 points seen during the last calls of the method.
-            It returns None if the model has not seen yet seq_len-1 data points and previous_data_points is None.
-        timestamp: int, default: -1.
-            Timestamp of the labeled point, matching the corresponding predict_one
-            call. Use explicit timestamps for delayed labels; -1 supports immediate labels.
+        During a drift comparison, update candidate Kappa scores using the
+        prediction stored for timestamp. Use the same timestamp in predict_one
+        and learn_one for delayed labels. The default -1 is for immediate
+        prediction and label pairs. previous_data_points is a legacy argument.
+        Returns None.
         """
 
         self.manager.collect_concept_sample(x, y)
@@ -280,14 +286,13 @@ class MagicNet:
         return None
 
     def add_new_column(self, task_id=None):
-        """
-        It signals the Manager a drift has occurred so that it can start the ensemble. Additionally
-        kept previous data points are removed and batches reset.
+        """Handle a drift notification and start a comparison when eligible.
 
-        Parameters
-        ----------
-        task_id: int, default: None
-            The id of the new task. If None it increments the last one.
+        An active comparison or grace period suppresses the notification.
+        task_id defaults to the previous ID plus one. Supply consecutive IDs
+        when assigning them explicitly. Starting a comparison clears the
+        pending training minibatch. Temporal context is cleared when
+        reset_data_points is enabled.
         """
         if self.manager.in_expansion or self.manager.in_grace_period:
             self.manager.add_new_column(None)
@@ -342,6 +347,7 @@ class MagicNet:
         return perf_train
 
     def reset_previous_data_points(self):
+        """Clear the temporal context used to assemble recurrent sequences."""
         self.previous_data_points_batch_train = None
         self.previous_data_points_batch_inference = None
         self.previous_data_points_anytime_train = None
@@ -388,23 +394,13 @@ class MagicNet:
         task_id=None,
         timestamp: int = -1,
     ):
-        """
-        It performs prediction on a single data point.
+        """Predict the label of x, or return None during sequence warm-up.
 
-        Parameters
-        ----------
-        x: numpy.array or list
-            The features values of the single data point.
-        previous_data_points: numpy.array, default: None.
-            The features value of the data points preceding x in the sequence.
-            If None, it uses the last seq_len-1 points seen during the last calls of the method.
-            It returns None if the model has not seen yet seq_len-1 data points and previous_data_points is None.
-        timestamp: int, default: -1.
-            Identifier used to match this prediction with its eventual label.
-        Returns
-        -------
-        prediction : int
-            The predicted int label of x.
+        previous_data_points supplies the preceding feature rows. When it is
+        omitted, use the accumulated prediction context. task_id selects a
+        head and defaults to the current task. During a comparison, return
+        the prediction of the candidate with the highest selection-window
+        Kappa and store all candidate labels under timestamp for learn_one.
         """
         x = self._single_data_point_prep(x, previous_data_points)
         if x is None:
@@ -419,9 +415,11 @@ class MagicNet:
         return pred
 
     def get_state_dict(self):
+        """Return the active model's weights, or None during a drift comparison."""
         return self.manager.get_state_dict()
 
     def get_size(self):
+        """Return serialized weight size in MB for the active model or ensemble."""
         if self.manager.in_expansion:
             size = 0
             for k in self.manager.ensemble:
@@ -430,4 +428,5 @@ class MagicNet:
         return compute_model_size(self.manager.model)
 
     def get_seq_len(self):
+        """Return the number of observations in a recurrent input window."""
         return self.seq_len

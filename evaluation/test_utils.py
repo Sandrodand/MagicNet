@@ -37,6 +37,7 @@ def initialize(
     delta_=None,
     output_size_=2,
 ):
+    """Set the shared settings consumed by the legacy experiment factories."""
     global NUM_OLD_LABELS, SEQ_LEN, NUM_FEATURES, BATCH_SIZE, ITERATIONS, EVAL_CL, EVAL_PREQ, INITIAL_TASK, PATH, CONVERTERS, DELTA, OUTPUT_SIZE
     NUM_OLD_LABELS = num_old_labels_
     SEQ_LEN = seq_len_
@@ -51,12 +52,14 @@ def initialize(
 
 
 def initialize_callback(eval_cl_, eval_preq_):
+    """Register the continual and prequential evaluators used by callbacks."""
     global EVAL_PREQ, EVAL_CL
     EVAL_CL = eval_cl_
     EVAL_PREQ = eval_preq_
 
 
 def create_hat():
+    """Create a Hoeffding adaptive tree classifier."""
     return tree.HoeffdingAdaptiveTreeClassifier(
         grace_period=100,
         delta=1e-5,
@@ -66,6 +69,7 @@ def create_hat():
 
 
 def create_hat_ta():
+    """Create a Hoeffding adaptive tree augmented with past labels."""
     return TemporallyAugmentedClassifier(
         base_learner=create_hat(),
         num_old_labels=NUM_OLD_LABELS,
@@ -73,10 +77,12 @@ def create_hat_ta():
 
 
 def create_arf():
+    """Create an adaptive random forest classifier."""
     return forest.ARFClassifier(leaf_prediction="nb")
 
 
 def create_arf_ta():
+    """Create an adaptive random forest augmented with past labels."""
     return TemporallyAugmentedClassifier(
         base_learner=create_arf(),
         num_old_labels=NUM_OLD_LABELS,
@@ -84,6 +90,7 @@ def create_arf_ta():
 
 
 def create_cpnn_clstm():
+    """Create a cPNN with LSTM columns."""
     return cPNN(
         column_class=cLSTMLinear,
         device="cpu",
@@ -97,6 +104,7 @@ def create_cpnn_clstm():
 
 
 def create_qcpnn_clstm():
+    """Create a quantized cPNN with LSTM columns."""
     return cPNN(
         column_class=cLSTMLinear,
         device="cpu",
@@ -112,6 +120,7 @@ def create_qcpnn_clstm():
 
 
 def create_acpnn_clstm():
+    """Create an active cPNN with LSTM columns."""
     return cPNN(
         column_class=cLSTMLinear,
         device="cpu",
@@ -126,6 +135,7 @@ def create_acpnn_clstm():
 
 
 def callback_func_cl(**kwargs):
+    """Request continual-learning evaluation for the requested iteration range."""
     if "iteration" in kwargs:
         iteration = kwargs["iteration"]
     else:
@@ -138,6 +148,7 @@ def callback_func_cl(**kwargs):
 
 
 def callback_func_federated(**kwargs):
+    """Save federated cPNN task IDs and column performance to a pickle file."""
     if "suffix" in kwargs:
         iteration = kwargs["suffix"]
     else:
@@ -164,6 +175,7 @@ def callback_func_federated(**kwargs):
 
 
 def create_cpnn_for_dynamic():
+    """Create the active LSTM cPNN used to initialize dynamic learners."""
     return cPNN(
         column_class=cLSTMLinear,
         device="cpu",
@@ -179,26 +191,33 @@ def create_cpnn_for_dynamic():
 
 
 class BaseLearner:
+    """Supply independent copies of a shared LSTM cPNN."""
     def __init__(self):
+        """Create the prototype cPNN from the configured experiment settings."""
         self.base_learner: cPNN = create_cpnn_for_dynamic()
 
     def get_base_learner(self):
+        """Return a copy of the shared cPNN with its rollback settings."""
         return pickle.loads(pickle.dumps(self.base_learner))
 
     def get_cpnn(self):
+        """Return a copy of the shared cPNN with periodic snapshots disabled."""
         model: cPNN = pickle.loads(pickle.dumps(self.base_learner))
         model.set_save_column_freq(save_column_freq=None)
         return model
 
     def initialize_base_learner(self):
+        """Replace the prototype with a new cPNN."""
         self.base_learner = create_cpnn_for_dynamic()
 
 
 def create_iter_csv():
+    """Return the configured CSV stream of features and target labels."""
     return stream.iter_csv(str(PATH) + ".csv", converters=CONVERTERS, target="target")
 
 
 def create_drift_detector():
+    """Create Sentinel with the dataset-specific training interval."""
     if "weather" in PATH or "air_quality" or "pen_digits" in PATH:
         return Sentinel(ADWIN(delta=DELTA, clock=1))
     else:

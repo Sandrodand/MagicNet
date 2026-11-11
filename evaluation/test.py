@@ -16,9 +16,9 @@ MODE = "local"
 PATHS = [
     f"datasets/{d}_{c}conf"
     for c in range(1, 11)
-    for d in ["air_quality"]
+    for d in ["weather"]
 ]  # a list containing the paths of the data streams (without the extension)
-PATH_PERFORMANCE = "lstm"
+PATH_PERFORMANCE = "debug_ensemble"
 # the path in which to save the results. In the case of a relative path, the performance folder is automatically
 # created
 #TODO
@@ -50,10 +50,10 @@ UPLOAD_BASE_LEARNER = True
 # If True it uploads the base learner from the base_learner folder instead of initializing it random
 # This configuration can be used when you want to use an already initialized base learner. For instance, when you want
 # to compare performance with different detector's configurations and use the same base learner initialization.
-WRITE_CHECKPOINTS = False
+WRITE_CHECKPOINTS = True
 # True if you want to write the pickle files of the models after each supervised concept's end.
 
-BASE_RNN = ["lstm"]
+BASE_RNN = ["gru"]
 # Architectures evaluated together on the same stream and detections.
 SEQ_LEN_PARAM = None
 # The size of the sliding window. If None the default value for the dataset is set.
@@ -75,7 +75,9 @@ DELAY_PARAM = None
 # prediction)
 
 ###---MAGIC Net---
-ENSEMBLE_BATCHES = {"gru": 30, "lstm": 30}
+ENSEMBLE_BATCHES = {"gru": 50, "lstm": 50}
+SELECTION_BATCHES = {"gru": 40, "lstm": 40}
+DYNCPNN_SELECTION_BATCHES = {"gru": 40, "lstm": 40}
 HIDDEN_MULT = {"gru": None, "lstm": None}
 ENSEMBLE_TH = {"gru": 1.05, "lstm": 1.05}
 
@@ -89,9 +91,9 @@ suffix = ""
 # Optional common output suffix. RNN types are distinguished by learner names.
 
 # LEARNERS
-RNN_LEARNERS = ["cRNN", "DYNcPNN", "MAGIC_Net", "MAGIC_Net_sh", "MAGIC_Net_binary_sh", "MAGIC_Net_binary_mh", "MultiHeadCRNN"]
-# Available names: cRNN, cPNN, DYNcPNN, MAGIC_Net, MAGIC_Net_sh, MAGIC_Net_binary_sh, MAGIC_Net_binary_mh, MultiHeadCRNN
-# MAGIC_Net_binary_sh, MAGIC_Net_binary_mh.
+RNN_LEARNERS = ["MAGIC_Net"]
+# Available names: cRNN, cPNN, DYNcPNN, MAGIC_Net, MAGIC_Net_sh, MAGIC_Net_binary, MAGIC_Net_no_ignore,
+# MAGIC_Net_no_expand, MultiHeadCRNN_frozen, MultiHeadCRNN_learnable
 STREAM_LEARNERS = []
 # Optional architecture-independent methods, created once: ARF, ARF_TA, HAT, HAT_TA.
 
@@ -99,12 +101,15 @@ STREAM_LEARNERS = []
 # CODE
 # __________________
 def main():
+    """Run the configured prequential and continual-learning experiments."""
     CFG = Config(base_rnn=BASE_RNN)
     learners = CFG.create_learners(RNN_LEARNERS, STREAM_LEARNERS)
     for name, values in (
         ("HIDDEN_SIZE_PARAM", HIDDEN_SIZE_PARAM),
         ("HIDDEN_MULT", HIDDEN_MULT),
         ("ENSEMBLE_BATCHES", ENSEMBLE_BATCHES),
+        ("SELECTION_BATCHES", SELECTION_BATCHES),
+        ("DYNCPNN_SELECTION_BATCHES", DYNCPNN_SELECTION_BATCHES),
         ("ENSEMBLE_TH", ENSEMBLE_TH),
     ):
         if not isinstance(values, dict):
@@ -249,6 +254,8 @@ def main():
                 hidden_size=hidden_size,
                 hidden_mult=hidden_mult,
                 ensemble_batches=ENSEMBLE_BATCHES,
+                selection_batches=SELECTION_BATCHES,
+                dyncpnn_selection_batches=DYNCPNN_SELECTION_BATCHES,
                 ensemble_th=ENSEMBLE_TH,
                 save_column_freq=save_column_freq,
                 drift_delay=drift_delay,

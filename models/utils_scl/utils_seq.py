@@ -5,6 +5,7 @@ from models.utils_scl.utils import accuracy, _pe_kappa
 
 @torch.enable_grad()
 def loss_many_to_many(predictions, y, criterion):
+    """Average per-step classification losses over sequence steps and batch examples."""
     loss = []
     for i in range(0, predictions.size()[1]):
         pred = predictions[:, i, :]
@@ -18,6 +19,7 @@ def loss_many_to_many(predictions, y, criterion):
 
 
 def get_accuracy_from_pred(predictions, y, batch_reduction=True):
+    """Compute sequence accuracy and optionally average across examples."""
     with torch.no_grad():
         acc = []
         for i in range(0, predictions.size()[1]):
@@ -41,6 +43,7 @@ def get_accuracy_from_pred(predictions, y, batch_reduction=True):
 
 
 def get_kappa_from_pred(predictions, y, reduction="mean"):
+    """Compute Cohen's Kappa per sequence, averaging when reduction is mean."""
     with torch.no_grad():
         accuracy = get_accuracy_from_pred(predictions, y, False)
         p_e = []
@@ -57,6 +60,7 @@ def get_kappa_from_pred(predictions, y, reduction="mean"):
 
 
 def get_kappa_temporal_from_pred(predictions, y, first_label, reduction="mean"):
+    """Compute Kappa against the previous-label baseline and optionally average it."""
     with torch.no_grad():
         accuracy = get_accuracy_from_pred(predictions, y, False)
         predictions_naive = torch.cat(

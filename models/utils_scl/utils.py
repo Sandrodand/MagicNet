@@ -155,6 +155,7 @@ def kappa_temporal(outputs, targets, first_label=None):
 def customized_loss(predictions, y, criterion, device):
     # print(predictions.type(), y.type())
 
+    """Apply the loss criterion to predictions and integer targets on the specified device."""
     if y.type() != torch.LongTensor:
         y = y.type(torch.LongTensor)
 

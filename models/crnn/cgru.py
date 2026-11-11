@@ -4,6 +4,7 @@ import numpy as np
 
 
 class cGRULinear(nn.Module):
+    """Single-layer GRU with a linear classifier and optional lateral inputs."""
     def __init__(
         self,
         input_size=2,
@@ -13,6 +14,7 @@ class cGRULinear(nn.Module):
         batch_size=50,
         many_to_one=False,
     ):
+        """Configure input width, hidden width, output classes, device, and output mode."""
         super(cGRULinear, self).__init__()
 
         # PARAMETERS
@@ -33,6 +35,7 @@ class cGRULinear(nn.Module):
         self.linear.to(self.device)
 
     def forward(self, x, prev_h, train=False):
+        """Return logits and hidden states, concatenating prev_h to the inputs when supplied."""
         input_f = x.to(self.device)
 
         if prev_h is not None:

@@ -144,6 +144,7 @@ class EvaluateContinualLearning:
         return {self.feature_names[i]: x[i] for i in range(len(x))}
 
     def retrieve_linear_biases(self, checkpoints):
+        """Return the single-head classifier bias from each MAGIC Net checkpoint."""
         biases = []
         for model in checkpoints:
             biases.append(model.manager.model.classifier[1].bias)
@@ -151,12 +152,12 @@ class EvaluateContinualLearning:
 
     def evaluate(self, iteration=0, **kwargs):
         """
-        It performs the CL evaluation on the learners.s.
+        Evaluate learner checkpoints on the test stream of each concept.
 
         Parameters
         ----------
         iteration: int, default: 0
-            The index of the iteration. Set 0 if you are running only an interation.
+            The index of the experiment iteration. Use 0 for a single iteration.
         Returns
         -------
         It writes the following pickle files in the path_write/dataset_name path.

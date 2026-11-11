@@ -6,7 +6,9 @@ from models.magic.inference_magic import InferenceMagicNet
 
 
 class InferenceMultiHeadCRNN(InferenceMagicNet):
+    """Evaluate historical MultiHeadCRNN heads and archived snapshots."""
     def prepare_task_models(self):
+        """Resolve a copy of the checkpoint and build a model for each retained task."""
         model_copy = deepcopy(self.model)
         # A CL checkpoint can fall in the middle of a drift comparison. Decide
         # only on this copy so the saved training state remains resumable.

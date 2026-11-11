@@ -194,6 +194,7 @@ class PiggyBackRNN(nn.Module):
         return out
 
     def add_task_head(self, task_id, previous=False):
+        """Add a task head when enabled, optionally copying the latest head."""
         if self.multi_head and str(task_id) not in self.heads:
             if not previous:
                 self.heads[str(task_id)] = nn.Linear(
@@ -208,7 +209,7 @@ class PiggyBackRNN(nn.Module):
         It adapts effective historical masks to the current model's shape.
         New connections are padded with zero before conversion back to logits.
         """
-        # Prendiamo le maschere attuali per sapere quali sono le dimensioni "giuste" di oggi
+        # Use the current masks to determine the target shapes.
         reference_masks = self.get_piggymasks()
         gate_count = self.classifier[0].gate_count
         padded_masks = {}
@@ -234,12 +235,12 @@ class PiggyBackRNN(nn.Module):
                 old_hidden = old_tensor.shape[0] // gate_count
                 new_hidden = target_shape[0] // gate_count
 
-                if len(target_shape) == 1:  # Maschere 1D o Bias
+                if len(target_shape) == 1:  # Bias mask
                     for i in range(gate_count):
                         new_tensor[
                             i * new_hidden : i * new_hidden + old_hidden
                         ] = old_tensor[i * old_hidden : (i + 1) * old_hidden]
-                elif len(target_shape) == 2:  # Maschere 2D (Weights)
+                elif len(target_shape) == 2:  # Weight mask
                     old_in = old_tensor.shape[1]
                     for i in range(gate_count):
                         new_tensor[
@@ -259,6 +260,7 @@ class PiggyBackRNN(nn.Module):
         return padded_masks
 
     def reinit_piggymask(self, freeze_masks=None, mask_params=None):
+        """Initialize task masks or restore effective historical masks at the current width."""
         if mask_params is not None:
             mask_params = self._pad_historical_masks(mask_params)
         for module in self.classifier:
@@ -269,6 +271,7 @@ class PiggyBackRNN(nn.Module):
             )
 
     def reinit_linear_bias(self):
+        """Reinitialize the shared classifier bias in single-head mode."""
         if not self.multi_head:
             self.classifier[1].reinit_linear_bias()
 
@@ -304,8 +307,8 @@ class PiggyBackRNN(nn.Module):
         Returns
         -------
         dict
-            A dictionary containing freeze masks (set to 1) for the newly added weights,
-            allowing them to be trained while preserving older weights.
+            Freeze masks with ones for existing parameters and zeros for new
+            parameters, which remain trainable.
         """
         self.hidden_size = round(self.hidden_size + neurons_to_add)
         freeze_masks = {}
@@ -320,12 +323,14 @@ class PiggyBackRNN(nn.Module):
         return freeze_masks
 
     def create_freezemask(self):
+        """Return all-zero freeze masks for the masked layers."""
         freeze_mask = {}
         for module in self.classifier:
             freeze_mask.update(module.create_freezemask())
         return freeze_mask
 
     def get_piggymasks(self, threshold=True):
+        """Return detached copies of the effective masks or their raw logits."""
         piggymasks = {}
 
         if threshold:

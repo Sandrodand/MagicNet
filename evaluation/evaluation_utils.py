@@ -3,6 +3,7 @@ import torch
 
 
 def compute_model_size(model):
+    """Return the serialized size of a model's state dictionary in megabytes."""
     sfx = str(hex(id(model)))
     torch.save(model.state_dict(), f"temp{sfx}.p")
     size = os.path.getsize(f"temp{sfx}.p") / 1e6
@@ -26,6 +27,7 @@ def _get_filtered_state(m):
 
 
 def compute_magic_size(models):
+    """Return serialized sizes in megabytes for earlier models combined and the final model."""
     size = 0
     for model in models[:-1]:
         sfx = str(hex(id(model)))

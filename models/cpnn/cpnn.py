@@ -140,9 +140,11 @@ class cPNN:
         self.device = device
 
     def get_seq_len(self):
+        """Return the recurrent input window length."""
         return self.seq_len
 
     def set_initial_task(self, task):
+        """Set the task ID of the first column."""
         self.task_ids = [task]
 
     def set_save_column_freq(self, save_column_freq: int, drift_delay: int):
@@ -246,6 +248,7 @@ class cPNN:
         return x, y, y_seq
 
     def restore_previous_state(self):
+        """Restore a copied pre-drift column and its optimizer, then clear rollback history."""
         if len(self.saved_columns) > 0:
             cols = [
                 sc
@@ -547,23 +550,11 @@ class cPNN:
         self, x: np.array, column_id: int = None, previous_data_points: np.array = None
     ):
         """
-        It gets the hidden layer's output of a specific column given a single data point.
-        It returns only the output associated with the last item of the sequence.
+        Return the selected column's hidden vector at the final sequence step.
 
-        Parameters
-        ----------
-        x: numpy.array or list
-            The features values of the single data point.
-        column_id: int, default: None.
-            The id of the column to use. If None the last column is used.
-        previous_data_points: numpy.array, default: None.
-            The features value of the data points preceding x in the sequence.
-            If None, it uses the last seq_len-1 points seen during the last calls of the method.
-            It returns None if the model has not seen yet seq_len-1 data points and previous_data_points is None.
-        Returns
-        -------
-        prediction : int
-            The predicted int label of x.
+        Pass the preceding seq_len - 1 feature vectors in previous_data_points
+        or let the model use its running context. The column defaults to the
+        penultimate column. Return None when the context or column is missing.
         """
         x = self._single_data_point_prep(x, previous_data_points, inference=False)
         if x is None:
@@ -575,9 +566,11 @@ class cPNN:
             return h[0, -1, :].detach().cpu().numpy()
 
     def get_n_columns(self):
+        """Return the number of retained columns."""
         return len(self.columns.columns)
 
     def reset_previous_data_points(self):
+        """Clear temporal context and predictions awaiting labels."""
         self.previous_data_points_batch_train = None
         self.previous_data_points_batch_inference = None
         self.previous_data_points_anytime_train = None
@@ -646,6 +639,7 @@ class cPNN:
         return perf_train
 
     def remove_last_column(self):
+        """Remove the newest column and resume training its predecessor if one exists."""
         if len(self.columns.columns) > 1:
             self.columns_perf = self.columns_perf[:-1]
             self.columns_perf[-1] = metrics.CohenKappa()
@@ -657,14 +651,17 @@ class cPNN:
             self.saved_columns = []
 
     def set_quantized(self, quantized):
+        """Set the quantization policy for existing columns and future additions."""
         self.columns.quantize = quantized
         for column in self.columns.columns:
             column.quantized = quantized
 
     def unfreeze_last_column(self):
+        """Allow the last column to train again."""
         self.columns.unfreeze_last_column()
 
     def take_first_columns(self, num_columns: int):
+        """Retain the first num_columns columns and clear temporal and rollback state."""
         self.columns_perf = self.columns_perf[:num_columns]
         self.columns_perf[-1] = metrics.CohenKappa()
         self.task_ids = self.task_ids[:num_columns]
@@ -693,7 +690,9 @@ class cPNN:
         return perf_train
 
     def get_hidden(self, x, column_id=None):
+        """Return the requested column's hidden states for the input sequences."""
         return self.columns.get_hidden(x, column_id)
 
     def get_size(self):
+        """Return the serialized size of the column parameters in megabytes."""
         return compute_model_size(self.columns)

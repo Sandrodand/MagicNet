@@ -12,6 +12,7 @@ from models.magic.piggyback_layers import GRUBlockMath, LSTMBlockMath
 
 
 class MultiHeadCrnnModel(nn.Module):
+    """Share an unmasked GRU or LSTM across task-specific linear heads."""
     frozen_hidden_size = 0
 
     def __init__(
@@ -24,6 +25,7 @@ class MultiHeadCrnnModel(nn.Module):
         device="cpu",
         base_learner_weights=None,
     ):
+        """Create the recurrent backbone and its initial classification head."""
         super().__init__()
         self.device = torch.device(device)
         if base_learner_weights is None or isinstance(base_learner_weights, dict):
@@ -55,6 +57,10 @@ class MultiHeadCrnnModel(nn.Module):
         self.set_trainable_task(1)
 
     def forward(self, x, task_id=None):
+        """Return last-step logits for task_id, which defaults to the latest head.
+
+        A narrower historical head runs the recurrence at its original width.
+        """
         if task_id is None:
             task_id = list(self.heads)[-1]
         head = self.heads[str(task_id)]
@@ -92,6 +98,11 @@ class MultiHeadCrnnModel(nn.Module):
 
     @torch.no_grad()
     def expand_hidden(self, hidden_mult, freeze_backbone):
+        """Add hidden_mult units and copy the existing blocks gate by gate.
+
+        freeze_backbone marks the copied weights and biases for gradient
+        suppression. Newly added connections remain trainable.
+        """
         old_size = self.hidden_size
         new_size = old_size + hidden_mult
         recurrent_name = "lstm" if isinstance(self.learner, cLSTMLinear) else "gru"
@@ -117,6 +128,7 @@ class MultiHeadCrnnModel(nn.Module):
         self.frozen_hidden_size = old_size if freeze_backbone else 0
 
     def zero_frozen_gradients(self):
+        """Zero gradients on the recurrent blocks preserved by expansion."""
         if self.frozen_hidden_size:
             for name, parameter in self.learner.named_parameters():
                 grad = parameter.grad
@@ -129,6 +141,7 @@ class MultiHeadCrnnModel(nn.Module):
                         old_rows.zero_()
 
     def add_task_head(self, task_id, previous=False):
+        """Add a head for task_id, optionally copying the most recent head."""
         if str(task_id) in self.heads:
             return
         if previous:
@@ -139,11 +152,13 @@ class MultiHeadCrnnModel(nn.Module):
         self.set_trainable_task(task_id)
 
     def freeze_backbone(self):
+        """Disable gradients for all recurrent backbone parameters."""
         self.backbone_frozen = True
         for param in self.learner.parameters():
             param.requires_grad_(False)
 
     def set_trainable_task(self, task_id):
+        """Enable training for the selected head and eligible recurrent weights."""
         for param in self.learner.parameters():
             param.requires_grad_(not self.backbone_frozen)
         for key, head in self.heads.items():

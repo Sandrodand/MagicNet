@@ -135,6 +135,7 @@ class ElementWiseRNN(nn.Module):
         recurrent_weights=None,
         recurrent_mask_weights=None,
     ):
+        """Configure a recurrent layer with separate mask logits for gate weights and biases."""
         super().__init__()
         if self.gate_count is None:
             raise TypeError("Instantiate a concrete ElementWiseRNN subclass")
@@ -223,6 +224,7 @@ class ElementWiseRNN(nn.Module):
                     parameter.copy_(values.to(parameter))
 
     def forward(self, input):
+        """Run recurrence with the effective masks applied to weights and biases."""
         initial_state = self._initial_state(input)
 
         # Apply threshold function to real valued masks
@@ -253,6 +255,7 @@ class ElementWiseRNN(nn.Module):
         raise NotImplementedError
 
     def reinit_piggymask(self, mask_param_init, freeze_masks=None, mask_params=None):
+        """Initialize new mask logits or reconstruct them from effective masks."""
         if mask_params is None:
             self.initialize_piggymask(mask_param_init, freeze_masks=freeze_masks)
             return
@@ -288,7 +291,7 @@ class ElementWiseRNN(nn.Module):
         self.hidden_size = round(self.hidden_size + addendum)
         freeze_masks = {}
 
-        # 1. Creiamo i nuovi tensori
+        # Allocate expanded weight and bias tensors.
         temp_weight_ih = self.weight_ih.new_empty(
             self.gate_count * self.hidden_size, self.input_size
         ).uniform_(
@@ -348,6 +351,7 @@ class ElementWiseRNN(nn.Module):
         return freeze_masks
 
     def adjust_piggymask(self, mask_param_init):
+        """Preserve existing gate logits and initialize new entries after expansion."""
         old_hidden_size = self.mask_real_weight_ih.size(0) // self.gate_count
 
         temp_mask_real_weight_ih = self.weight_ih.data.new(self.weight_ih.size()).fill_(
@@ -363,7 +367,7 @@ class ElementWiseRNN(nn.Module):
             self.bias_hh_l0.size()
         ).fill_(mask_param_init)
 
-        # Trasloco a blocchi anche per le maschere continue!
+        # Copy existing mask logits gate by gate.
         for i in range(self.gate_count):
             old_start = i * old_hidden_size
             old_end = (i + 1) * old_hidden_size
@@ -389,6 +393,7 @@ class ElementWiseRNN(nn.Module):
         self.mask_real_bias_hh_l0 = Parameter(temp_mask_real_bias_hh_l0)
 
     def initialize_piggymask(self, mask_param_init, freeze_masks=None):
+        """Initialize mask logits, randomizing frozen sigmoid entries when requested."""
         temp_mask_real_weight_ih = self.weight_ih.data.new(self.weight_ih.size())
         temp_mask_real_weight_hh = self.weight_hh.data.new(self.weight_hh.size())
         temp_mask_real_bias_ih_l0 = self.weight_ih.data.new(self.bias_ih_l0.size())
@@ -494,6 +499,7 @@ class ElementWiseLinear(nn.Module):
         linear_mask_weights=None,
         linear_weights=None,
     ):
+        """Configure a linear classifier with mask logits on its weight matrix."""
         super(ElementWiseLinear, self).__init__()
 
         self.in_features = in_features
@@ -540,6 +546,7 @@ class ElementWiseLinear(nn.Module):
         self.initialize_piggymask(self.frozen_mask_param, self.linear_mask_weights)
 
     def reinit_piggymask(self, mask_param_init, freeze_masks=None, mask_params=None):
+        """Initialize new weight mask logits or reconstruct them from an effective mask."""
         if mask_params is None:
             self.initialize_piggymask(mask_param_init, freeze_mask=freeze_masks)
             return
@@ -553,6 +560,7 @@ class ElementWiseLinear(nn.Module):
         self.mask_real_weight = Parameter(logits)
 
     def reinit_linear_bias(self):
+        """Reinitialize the classifier bias if enabled."""
         if self.bias is not None:
             self.bias = Parameter(
                 torch.Tensor(self.out_features).uniform_(
@@ -563,6 +571,7 @@ class ElementWiseLinear(nn.Module):
             self.register_parameter("bias", None)
 
     def create_freezemask(self):
+        """Return an all-zero freeze mask for the classifier weights."""
         freeze_masks = {}
         freeze_masks["weight"] = torch.zeros_like(self.weight)
         return freeze_masks
@@ -570,6 +579,7 @@ class ElementWiseLinear(nn.Module):
     def initialize_piggymask(
         self, mask_param_init, linear_mask_weights=None, freeze_mask=None
     ):
+        """Initialize classifier mask logits or copy supplied logits."""
         temp_mask_real_weight = self.weight.data.new(self.weight.size())
         temp_mask_real_weight.fill_(mask_param_init)
 
@@ -587,6 +597,7 @@ class ElementWiseLinear(nn.Module):
             self.mask_real_weight = Parameter(temp_mask_real_weight)
 
     def expand_hidden(self, multiplier):
+        """Grow the input width and return a freeze mask marking the old weights."""
         freeze_mask = {}
         self.in_features = round(self.in_features + multiplier)
         temp_weight = torch.Tensor(self.out_features, self.in_features).uniform_(
@@ -608,6 +619,7 @@ class ElementWiseLinear(nn.Module):
         return freeze_mask
 
     def adjust_piggymask(self, mask_param_init):
+        """Keep existing weight mask logits and initialize the added columns."""
         temp_mask_real_weight = self.weight.data.new(self.weight.size())
 
         temp_mask_real_weight.fill_(mask_param_init)
@@ -620,6 +632,7 @@ class ElementWiseLinear(nn.Module):
 
     def forward(self, input):
         # Get transformed mask from real-valued mask.
+        """Classify the last sequence step using masked weights and the classifier bias."""
         mask_thresholded = self.threshold_fn(self.mask_real_weight)
         # Mask weights with above mask.
         weight_thresholded = mask_thresholded * self.weight

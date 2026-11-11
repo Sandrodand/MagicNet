@@ -23,7 +23,9 @@ _UNSET = object()
 
 
 class Config:
+    """Configure data streams, detectors, and learner factories for an experiment."""
     def __init__(self, base_learner="clstm", *, base_rnn=None):
+        """Enable one or more GRU or LSTM architectures, accepting cGRU and cLSTM aliases."""
         selected = base_learner if base_rnn is None else base_rnn
         if isinstance(selected, str):
             selected = [selected]
@@ -47,7 +49,9 @@ class Config:
         self.hidden_mult = {rnn: None for rnn in self.base_rnn}
         self.device = "cpu"
         self.mask_init = "uniform"
-        self.ensemble_batches = {rnn: 30 for rnn in self.base_rnn}
+        self.ensemble_batches = {rnn: 50 for rnn in self.base_rnn}
+        self.selection_batches = {rnn: 25 for rnn in self.base_rnn}
+        self.dyncpnn_selection_batches = {rnn: 50 for rnn in self.base_rnn}
         self.ensemble_th = {rnn: 1.05 for rnn in self.base_rnn}
         self.drift_delay = 1200
         self.save_column_freq = 500
@@ -105,7 +109,19 @@ class Config:
         ensemble_th=None,
         save_column_freq=_UNSET,
         drift_delay=_UNSET,
+        selection_batches=None,
+        dyncpnn_selection_batches=None,
     ):
+        """Update the experiment configuration.
+
+        Hidden size, expansion width, ensemble length, selection length, and
+        expansion threshold accept either one value for all RNNs or a mapping
+        with an entry for each enabled RNN. selection_batches applies to
+        MAGIC Net and MultiHeadCRNN. dyncpnn_selection_batches applies to DYNcPNN.
+        Omit save_column_freq or drift_delay to keep its current value, or pass
+        None to clear it. Changes to data paths or model input and shape
+        settings invalidate the affected cached base learners.
+        """
         previous = (self.path, self.num_features, self.output_size, self.seq_len,
                     self.batch_size, self.device)
         previous_hidden = self.hidden_size.copy()
@@ -139,6 +155,12 @@ class Config:
             self._update_rnn_parameter("hidden_mult", hidden_mult)
         if ensemble_batches is not None:
             self._update_rnn_parameter("ensemble_batches", ensemble_batches)
+        if selection_batches is not None:
+            self._update_rnn_parameter("selection_batches", selection_batches)
+        if dyncpnn_selection_batches is not None:
+            self._update_rnn_parameter(
+                "dyncpnn_selection_batches", dyncpnn_selection_batches
+            )
         if ensemble_th is not None:
             self._update_rnn_parameter("ensemble_th", ensemble_th)
         if save_column_freq is not _UNSET:
@@ -156,11 +178,13 @@ class Config:
                 )
 
     def initialize_callback(self, eval_cl_, eval_preq_):
+        """Register the continual and prequential evaluators used by callbacks."""
         self.eval_cl = eval_cl_
         self.eval_preq = eval_preq_
 
     @staticmethod
     def create_hat():
+        """Create a Hoeffding adaptive tree classifier."""
         return tree.HoeffdingAdaptiveTreeClassifier(
             grace_period=100,
             delta=1e-5,
@@ -169,6 +193,7 @@ class Config:
         )
 
     def create_hat_ta(self):
+        """Create a Hoeffding adaptive tree augmented with past labels."""
         return TemporallyAugmentedClassifier(
             base_learner=self.create_hat(),
             num_old_labels=self.ta_order,
@@ -176,21 +201,25 @@ class Config:
 
     @staticmethod
     def create_arf():
+        """Create an adaptive random forest classifier."""
         return forest.ARFClassifier(leaf_prediction="nb")
 
     @staticmethod
     def create_arf_no_adwin():
+        """Create an adaptive random forest with drift and warning detectors disabled."""
         return forest.ARFClassifier(
             leaf_prediction="nb", drift_detector=None, warning_detector=None
         )
 
     def create_arf_ta(self):
+        """Create an adaptive random forest augmented with past labels."""
         return TemporallyAugmentedClassifier(
             base_learner=self.create_arf(),
             num_old_labels=self.ta_order,
         )
 
     def create_arf_ta_no_adwin(self):
+        """Create a label-augmented random forest with drift and warning detectors disabled."""
         return TemporallyAugmentedClassifier(
             base_learner=self.create_arf_no_adwin(),
             num_old_labels=self.ta_order,
@@ -214,28 +243,36 @@ class Config:
         )
 
     def create_qcpnn_clstm(self):
+        """Create a quantized LSTM cPNN without periodic rollback snapshots."""
         return self._create_cpnn("lstm", quantize=True, checkpoints=False)
 
     def create_acpnn_clstm(self):
+        """Create an active LSTM cPNN without periodic rollback snapshots."""
         return self._create_cpnn("lstm", checkpoints=False)
 
     def create_cpnn_for_dynamic(self, rnn=None):
+        """Create an active cPNN with the selected recurrent architecture and rollback settings."""
         return self._create_cpnn(rnn)
 
     def create_cpnn_clstm_for_dynamic(self):
+        """Create the LSTM base learner with the configured rollback settings."""
         return self.create_cpnn_for_dynamic("lstm")
 
     def create_cpnn_cgru_for_dynamic(self):
+        """Create the GRU base learner with the configured rollback settings."""
         return self.create_cpnn_for_dynamic("gru")
 
     def create_base_cpnn(self, rnn=None):
+        """Return an independent copy of the selected shared base learner."""
         return self.base_learner[self._resolve_rnn(rnn)].get_cpnn()
 
     def create_dynamic_cpnn(self, rnn=None, name=None):
+        """Create DYNcPNN from the shared base learner for the selected RNN."""
         rnn = self._resolve_rnn(rnn)
         return DynamicCPNN(
             [self.base_learner[rnn].get_base_learner()],
-            drift_window_batches=self.ensemble_batches[rnn],
+            ensemble_batches=self.ensemble_batches[rnn],
+            selection_batches=self.dyncpnn_selection_batches[rnn],
             name=f"DYNcPNN_{rnn}" if name is None else name,
         )
 
@@ -251,6 +288,7 @@ class Config:
             hidden_size=self.hidden_size[rnn],
             hidden_mult=self.hidden_mult[rnn],
             ensemble_batches=self.ensemble_batches[rnn],
+            selection_batches=self.selection_batches[rnn],
             ensemble_th=self.ensemble_th[rnn],
             base_learner_weights=self.base_learner[rnn].get_base_learner(),
             checkpoint_freq=self.save_column_freq,
@@ -259,42 +297,72 @@ class Config:
         )
 
     def create_magic_net(self, rnn=None, name=None):
+        """Create multi-head MAGIC Net with capped sigmoid masks."""
         return MagicNet(
             threshold_fn="sigmoid", multi_head=True,
             **self._magic_parameters(rnn, "MAGIC_Net", name),
         )
 
-    def create_multihead_crnn(self, rnn=None, name=None):
-        return MultiHeadCrnn(**self._magic_parameters(rnn, "MultiHeadCRNN", name))
-
-    def create_magic_net_binary(self, rnn=None, name=None):
+    def create_magic_net_no_ignore(self, rnn=None, name=None):
+        """Create multi-head MAGIC Net with the Ignore candidate disabled."""
         return MagicNet(
-            threshold_fn="binarizer", multi_head=False,
-            **self._magic_parameters(rnn, "MAGIC_Net_binary_sh", name),
+            threshold_fn="sigmoid", multi_head=True, ignore_option=False,
+            **self._magic_parameters(rnn, "MAGIC_Net_no_ignore", name),
         )
 
-    def create_magic_net_binary_mh(self, rnn=None, name=None):
+    def create_magic_net_no_expand(self, rnn=None, name=None):
+        """Create multi-head MAGIC Net with recurrent expansion disabled."""
+        return MagicNet(
+            threshold_fn="sigmoid", multi_head=True, expand_option=False,
+            **self._magic_parameters(rnn, "MAGIC_Net_no_expand", name),
+        )
+
+    def create_multihead_crnn_frozen(self, rnn=None, name=None):
+        """Create the mask-free ablation that freezes previously learned recurrent parameters on adaptation."""
+        return MultiHeadCrnn(
+            freeze_backbone=True,
+            **self._magic_parameters(rnn, "MultiHeadCRNN_frozen", name),
+        )
+
+    def create_multihead_crnn_learnable(self, rnn=None, name=None):
+        """Create the mask-free ablation with a continually trainable recurrent backbone."""
+        return MultiHeadCrnn(
+            freeze_backbone=False,
+            **self._magic_parameters(rnn, "MultiHeadCRNN_learnable", name),
+        )
+
+    def create_magic_net_binary(self, rnn=None, name=None):
+        """Create multi-head MAGIC Net with binary masks."""
         return MagicNet(
             threshold_fn="binarizer", multi_head=True,
-            **self._magic_parameters(rnn, "MAGIC_Net_binary_mh", name),
+            **self._magic_parameters(rnn, "MAGIC_Net_binary", name),
         )
 
     def create_magic_net_single_head(self, rnn=None, name=None):
+        """Create MAGIC Net with a shared classifier and capped sigmoid masks."""
         return MagicNet(
             threshold_fn="sigmoid", multi_head=False,
             **self._magic_parameters(rnn, "MAGIC_Net_sh", name),
         )
 
     def create_learners(self, rnn_methods, stream_methods=()):
-        """Bind each factory to its architecture; non-RNN methods are created once."""
+        """Return learner configurations with lazily bound factories.
+
+        Pass registered recurrent method names in rnn_methods and stream
+        baseline names in stream_methods. Each recurrent method is registered
+        once per enabled architecture with its RNN suffix. Each stream baseline
+        is registered once. Unknown or duplicate names raise ValueError.
+        """
         rnn_factories = {
             "cRNN": (self.create_base_cpnn, dict(cpnn=True, drift=False)),
             "cPNN": (self.create_base_cpnn, dict(cpnn=True, drift=True)),
             "MAGIC_Net": (self.create_magic_net, dict(magic=True, drift=True)),
             "MAGIC_Net_sh": (self.create_magic_net_single_head, dict(magic=True, drift=True)),
-            "MAGIC_Net_binary_sh": (self.create_magic_net_binary, dict(magic=True, drift=True)),
-            "MAGIC_Net_binary_mh": (self.create_magic_net_binary_mh, dict(magic=True, drift=True)),
-            "MultiHeadCRNN": (self.create_multihead_crnn, dict(magic=True, drift=True)),
+            "MAGIC_Net_binary": (self.create_magic_net_binary, dict(magic=True, drift=True)),
+            "MAGIC_Net_no_ignore": (self.create_magic_net_no_ignore, dict(magic=True, drift=True)),
+            "MAGIC_Net_no_expand": (self.create_magic_net_no_expand, dict(magic=True, drift=True)),
+            "MultiHeadCRNN_frozen": (self.create_multihead_crnn_frozen, dict(magic=True, drift=True)),
+            "MultiHeadCRNN_learnable": (self.create_multihead_crnn_learnable, dict(magic=True, drift=True)),
             "DYNcPNN": (self.create_dynamic_cpnn, dict(dyn_cpnn=True)),
         }
         stream_factories = {
@@ -366,6 +434,7 @@ class Config:
                     pickle.dump(self.base_learner[rnn].get_base_learner(), stream)
 
     def callback_func_cl(self, **kwargs):
+        """Request continual-learning evaluation for the requested iteration range."""
         if "iteration" in kwargs:
             iteration = kwargs["iteration"]
         else:
@@ -378,6 +447,7 @@ class Config:
 
     @staticmethod
     def callback_func_federated(**kwargs):
+        """Save federated cPNN task IDs and column performance to a pickle file."""
         if "suffix" in kwargs:
             iteration = kwargs["suffix"]
         else:
@@ -406,11 +476,13 @@ class Config:
             pickle.dump(selection, f)
 
     def create_iter_csv(self):
+        """Return a CSV stream of feature dictionaries and target labels."""
         return stream.iter_csv(
             str(self.path) + ".csv", converters=self.converters, target="target"
         )
 
     def create_drift_detector(self):
+        """Build the dataset-specific Sentinel and its internal evaluator."""
         path = self.path.lower()
         if "future" in path:
             if "air_quality" in path:
@@ -465,6 +537,7 @@ class Config:
 
     @staticmethod
     def create_hat():
+        """Create a Hoeffding adaptive tree classifier."""
         return tree.HoeffdingAdaptiveTreeClassifier(
             grace_period=100,
             delta=1e-5,
@@ -473,6 +546,7 @@ class Config:
         )
 
     def create_hat_ta(self):
+        """Create a Hoeffding adaptive tree augmented with past labels."""
         return TemporallyAugmentedClassifier(
             base_learner=self.create_hat(),
             num_old_labels=self.ta_order,
@@ -480,55 +554,68 @@ class Config:
 
     @staticmethod
     def create_arf():
+        """Create an adaptive random forest classifier."""
         return forest.ARFClassifier(leaf_prediction="nb")
 
     @staticmethod
     def create_arf_no_adwin():
+        """Create an adaptive random forest with drift and warning detectors disabled."""
         return forest.ARFClassifier(
             leaf_prediction="nb", drift_detector=None, warning_detector=None
         )
 
     def create_arf_ta(self):
+        """Create an adaptive random forest augmented with past labels."""
         return TemporallyAugmentedClassifier(
             base_learner=self.create_arf(),
             num_old_labels=self.ta_order,
         )
 
     def create_arf_ta_no_adwin(self):
+        """Create a label-augmented random forest with drift and warning detectors disabled."""
         return TemporallyAugmentedClassifier(
             base_learner=self.create_arf_no_adwin(),
             num_old_labels=self.ta_order,
         )
 
     def create_arf_ta_features(self):
+        """Create an adaptive random forest augmented with past feature vectors."""
         return TemporallyAugmentedFeaturesClassifier(
             base_learner=self.create_arf(), ta_order=self.ta_order
         )
 
     def create_arf_ta_features_no_adwin(self):
+        """Create a feature-augmented random forest with drift and warning detectors disabled."""
         return TemporallyAugmentedFeaturesClassifier(
             base_learner=self.create_arf_no_adwin(), ta_order=self.ta_order
         )
 
 
 class BaseLearner:
+    """Cache a shared base learner and supply independent copies to experiments."""
     def __init__(self, learner_func):
+        """Register the factory used to initialize or rebuild the cached learner."""
         self.learner_func = learner_func
         self.base_learner = None
 
     def get_base_learner(self):
+        """Return a copy of the prototype, creating it lazily if needed."""
         if self.base_learner is None:
             self.reset_base_learner()
         return pickle.loads(pickle.dumps(self.base_learner))
 
     def get_cpnn(self):
+        """Return an independent copy of the cached cPNN."""
         return self.get_base_learner()
 
     def reset_base_learner(self):
+        """Replace the cached prototype with a fresh learner from the factory."""
         self.base_learner = self.learner_func()
 
     def invalidate(self):
+        """Discard the cached prototype so the next request rebuilds it."""
         self.base_learner = None
 
     def set_base_learner(self, base_learner):
+        """Cache an independent copy of the supplied base learner."""
         self.base_learner = pickle.loads(pickle.dumps(base_learner))

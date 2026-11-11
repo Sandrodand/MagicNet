@@ -1,4 +1,5 @@
 def set_seq_len(dataset):
+    """Return the default recurrent sequence length for a dataset."""
     dataset = dataset.lower()
     if "weather" in dataset:
         return 11
@@ -23,6 +24,7 @@ def set_seq_len(dataset):
 
 
 def set_hidden_size(dataset, base_rnn):
+    """Return the initial hidden size for a dataset and recurrent architecture."""
     dataset = dataset.lower()
     if "gru" in base_rnn.lower():
         if "weather" in dataset:
@@ -38,11 +40,13 @@ def set_hidden_size(dataset, base_rnn):
 
 
 def set_gru_hidden_size(dataset):
+    """Return the fixed GRU hidden size used by the legacy configuration helper."""
     dataset = dataset.lower()
     return 100
 
 
 def set_batch_size(dataset):
+    """Return the default training minibatch size for a dataset."""
     dataset = dataset.lower()
     if "pen_digit" in dataset and "nospaces" in dataset:
         return 128
@@ -63,6 +67,7 @@ def set_batch_size(dataset):
 
 
 def set_output_size(dataset):
+    """Return the number of target classes configured for a dataset."""
     dataset = dataset.lower()
     if "pen_digit" in dataset:
         return 10
@@ -83,6 +88,7 @@ def set_output_size(dataset):
 
 
 def set_delay(dataset):
+    """Return the dataset's label delay in data points."""
     dataset = dataset.lower()
     if "future" in dataset:
         if "weather" in dataset:
@@ -96,6 +102,7 @@ def set_delay(dataset):
 
 
 def set_drift_delay(dataset):
+    """Return the dataset's rollback offset in data points."""
     dataset = dataset.lower()
     if "air_quality" in dataset:
         return 1200
@@ -107,6 +114,7 @@ def set_drift_delay(dataset):
 
 
 def set_save_column_freq(dataset):
+    """Return the dataset's rollback snapshot interval in data points."""
     dataset = dataset.lower()
     if "air_quality" in dataset:
         return 500
@@ -118,10 +126,12 @@ def set_save_column_freq(dataset):
 
 
 def set_adwin_delta(dataset):
+    """Return the default ADWIN sensitivity."""
     dataset = dataset.lower()
     return 0.002
 
 
 def set_deltas_test_detector(dataset):
+    """Return the ADWIN sensitivity values configured for detector evaluation."""
     dataset = dataset.lower()
     return [0.002]

@@ -7,20 +7,14 @@ import pickle
 
 
 class InferenceMagicNet:
+    """Evaluate a MAGIC checkpoint using the historical candidates in its pool."""
     def __init__(self, model: MagicNet, ensemble_data_points=500, rolling_window=None):
-        """
-        It implements a wrapper on a MAGIC Net model to perform inference when the task label is not known.
-        It builds an ensemble that considers all the saved PiggyMasks of a given GIN model. On the i-th data point of the test
-        set,it considers the prediction made by the best-performing model from the first data point of the test set
-        to the (i-1)-th.
+        """Copy a trained MAGIC model and prepare its historical candidates.
 
-        Parameters
-        ----------
-        model: MagicNet.
-            The MagicNet model.
-        ensemble_data_points: int, default: 128*2.
-            Number of data points after which to choose the best model in the ensemble during the inference mode.
-            Use -1 to keep the ensemble during the entire inference phase.
+        ensemble_data_points defaults to 500 label updates before keeping
+        the best candidate. Use -1 to keep all candidates throughout.
+        rolling_window optionally sets the Kappa window in observations.
+        With None, use cumulative Kappa for candidate selection.
         """
         self.model: MagicNet = pickle.loads(pickle.dumps(model))
         self._previous_data_points = None
@@ -36,20 +30,11 @@ class InferenceMagicNet:
         self.predictions = {}
 
     def predict_one(self, x, timestamp=-1):
-        """
-        It performs prediction on a single data point. It returns the prediction of the current best-performing Mask
-        from the first data point onwards.
+        """Predict the label of x using the currently selected historical candidate.
 
-        Parameters
-        ----------
-        x: numpy.array or list
-           The features values of the single data point.
-        Returns
-        -------
-        prediction : int
-           The predicted int label of x.
-        timestamp: int, default -1.
-            The timestamp associated with the data point. Use -1 in case of no delay between features and labels.
+        The latest task is selected initially. Keep predictions from all
+        active candidates under timestamp for update_inference. Use class
+        zero during recurrent warm-up.
         """
         self.predictions[timestamp] = []
         for i, m in enumerate(self.models):
@@ -71,20 +56,10 @@ class InferenceMagicNet:
         return self.predictions[timestamp][self.selected]
 
     def update_inference(self, y, timestamp=-1):
-        """
-        It updates the best-performing Mask using the real label. Call this method after predict_one on the same
-        data point.
+        """Score predictions at timestamp using y and update candidate selection.
 
-        Parameters
-        ----------
-        y: int.
-            The real label of the last predicted data point.
-        timestamp: int, default -1.
-            The timestamp associated with the data point. Use -1 in case of no delay between features and labels.
-
-        Returns
-        -------
-
+        After ensemble_data_points label updates, retain the best candidate.
+        Use the timestamp supplied to predict_one for delayed labels.
         """
         y = int(y)
         if timestamp in self.predictions:
@@ -102,9 +77,11 @@ class InferenceMagicNet:
             self.predictions = {}
 
     def prepare_task_models(self):
-        """
-        Crea una copia indipendente del modello per ogni task storico,
-        applica la maschera corrispondente una volta sola e lo congela.
+        """Build independent evaluation models for the available task IDs.
+
+        Resolve a pending comparison on a copy. Use archived networks when
+        available and restore historical masks, heads, or biases on copies
+        of the shared network for the remaining tasks.
         """
         models = []
         model_copy = pickle.loads(pickle.dumps(self.model))
@@ -137,7 +114,7 @@ class InferenceMagicNet:
                         pickle.dumps(task_model.manager.biases[task_id])
                     )
                     if historical_bias is not None:
-                        # Lo ricolleghiamo forzatamente come parametro sul device corretto
+                        # Restore the historical bias on the evaluation model's device.
                         task_model.manager.model.classifier[
                             1
                         ].bias = torch.nn.Parameter(
@@ -148,6 +125,7 @@ class InferenceMagicNet:
         return models
 
     def initialize(self):
+        """Rebuild the evaluation ensemble and reset its context and scores."""
         self.predictions = {}
         self._previous_data_points = None
 
@@ -171,4 +149,5 @@ class InferenceMagicNet:
         self.count = 0
 
     def reset_previous_data_points(self):
+        """Start a fresh CL evaluation sequence with the full historical pool."""
         self.initialize()

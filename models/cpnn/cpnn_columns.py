@@ -57,6 +57,7 @@ class cPNNColumns(torch.nn.Module):
         return torch.optim.Adam(self.columns[column_id].parameters(), lr=self.lr)
 
     def forward(self, x, column_id=None, train=False):
+        """Return logits from the requested column, defaulting to the latest column."""
         if column_id is None:
             column_id = len(self.columns) - 1
         out = None
@@ -66,6 +67,7 @@ class cPNNColumns(torch.nn.Module):
         return out
 
     def forward_hidden(self, x, column_id=None):
+        """Return hidden states from the requested column, defaulting to the penultimate one."""
         if column_id is None:
             column_id = len(self.columns) - 2
         out_h = None
@@ -74,6 +76,7 @@ class cPNNColumns(torch.nn.Module):
         return out_h
 
     def get_hidden(self, x, column_id=None):
+        """Return the hidden states for a feature sequence batch."""
         x = self.convert_to_tensor_dataset(x).to(self.device)
 
         if len(self.columns) == 1:
@@ -114,6 +117,7 @@ class cPNNColumns(torch.nn.Module):
         self.optimizers.append(self._create_optimizer())
 
     def unfreeze_last_column(self):
+        """Restore trainability and an optimizer for the newest column."""
         if self.quantize:
             if self.columns[-1].quantized:
                 last_column = self.columns[-1]
@@ -139,9 +143,11 @@ class cPNNColumns(torch.nn.Module):
             param.requires_grad = True
 
     def remove_last_column(self):
+        """Drop the newest column and its optimizer."""
         self.columns = self.columns[:-1]
         self.optimizers = self.optimizers[:-1]
 
     def take_first_columns(self, num_columns: int):
+        """Keep the first num_columns columns and their optimizers."""
         self.columns = self.columns[:num_columns]
         self.optimizers = self.optimizers[:num_columns]

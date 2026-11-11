@@ -14,13 +14,14 @@ from models.utils_scl.utils import accuracy, cohen_kappa, customized_loss
 
 
 class MultiHeadCrnnManager(MagicManager):
+    """Manage drift adaptation and historical heads for MultiHeadCRNN."""
     name = "MultiHeadCRNN"
 
     def __init__(
         self,
         model_class=cGRULinear,
         device="cpu",
-        ensemble_batches=30,
+        ensemble_batches=50,
         lr=0.01,
         input_size=4,
         batch_size=128,
@@ -42,8 +43,16 @@ class MultiHeadCrnnManager(MagicManager):
         name="MultiHeadCRNN",
         freeze_backbone=True,
         hidden_mult=None,
+        selection_batches=25,
         **kwargs,
     ):
+        """Initialize an unmasked backbone, its first head, and drift state.
+
+        The comparison uses ensemble_batches minibatches and selects by
+        Kappa over selection_batches minibatches. freeze_backbone controls
+        rollback and the trainable recurrent blocks in new candidates.
+        multi_head must be True.
+        """
         if not multi_head:
             raise ValueError("MultiHeadCRNN requires multi_head=True")
         self.name = name
@@ -73,12 +82,17 @@ class MultiHeadCrnnManager(MagicManager):
         self.in_expansion = False
         self.ensemble = {}
         self.ensemble_optims = {}
+        if not isinstance(selection_batches, int) or selection_batches <= 0:
+            raise ValueError("selection_batches must be a positive integer")
+        self.selection_batches = selection_batches
         self.ensemble_batches = ensemble_batches
         self.ensemble_th = ensemble_th
         self.ensemble_counter = 0
         self.ensemble_choices = []
         self.ensemble_perf = []
         self.current_perf = {}
+        self.current_perf_rolling = {}
+        self.selection_perf = {}
         self.last_pred = {}
         self.pending_predictions = {}
         self.previous_model_state = None
@@ -123,6 +137,12 @@ class MultiHeadCrnnManager(MagicManager):
         return self.get_previous_state()
 
     def add_new_column(self, task_id):
+        """Start a comparison with HeadOnly and the enabled optional candidates.
+
+        With freeze_backbone, HeadOnly and Expand start from rollback.
+        Otherwise they start from the current model. The rollback head is
+        available for historical retention in either mode.
+        """
         if self.in_expansion or self.in_grace_period:
             # Reuse MAGIC's alarm logging; it returns before touching masks.
             return super().add_new_column(task_id)
@@ -153,6 +173,7 @@ class MultiHeadCrnnManager(MagicManager):
             self.ensemble["Expand"] = expanded
 
         self.current_perf = {name: metrics.CohenKappa() for name in self.ensemble}
+        self._reset_rolling_metrics()
         self.ensemble_optims = {
             name: self._create_optimizer(model) for name, model in self.ensemble.items()
         }
@@ -162,15 +183,15 @@ class MultiHeadCrnnManager(MagicManager):
     def _decide_best_model(self):
         if not self.in_expansion:
             return
-        for name, item in self.current_perf.items():
+        for name, item in self.selection_perf.items():
             self._print(name, " performance: ", item)
         alternatives = [name for name in ("Ignore", "HeadOnly") if name in self.ensemble]
         best_model = max(
-            alternatives, key=lambda name: self.current_perf[name].get(), default="Expand"
+            alternatives, key=lambda name: self.selection_perf[name].get(), default="Expand"
         )
         if "Expand" in self.ensemble and best_model != "Expand":
-            best_kappa = self.current_perf[best_model].get()
-            if self.current_perf["Expand"].get() > max(
+            best_kappa = self.selection_perf[best_model].get()
+            if self.selection_perf["Expand"].get() > max(
                 best_kappa, self.ensemble_th * best_kappa
             ):
                 best_model = "Expand"
@@ -194,7 +215,7 @@ class MultiHeadCrnnManager(MagicManager):
                 "data_point_counter": self.data_point_counter
                 - self.ensemble_batches * self.batch_size,
                 "choice": best_model,
-                "final_perf": {k: v.get() for k, v in self.current_perf.items()},
+                "final_perf": {k: v.get() for k, v in self.selection_perf.items()},
                 "chosen_model_size": compute_model_size(self.ensemble[best_model]),
                 **retention,
             }
@@ -210,6 +231,8 @@ class MultiHeadCrnnManager(MagicManager):
         self.ensemble = {}
         self.ensemble_optims = {}
         self.current_perf = {}
+        self.current_perf_rolling = {}
+        self.selection_perf = {}
         self.last_pred = {}
         self.pending_predictions = {}
         self.previous_model_state = None

@@ -194,7 +194,7 @@ from functools import partial
 
 LearnerConfig(
     name="MultiHeadCRNN_lstm",
-    model=partial(CFG.create_multihead_crnn, rnn="lstm"),
+    model=partial(CFG.create_multihead_crnn_frozen, rnn="lstm"),
     drift=True,
     magic=True,
 )

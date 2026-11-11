@@ -5,6 +5,7 @@ import numpy as np
 
 
 class TemporallyAugmentedFeaturesClassifier(base.Classifier, ABC):
+    """Augment an online classifier with lagged feature values."""
     def __init__(
         self,
         base_learner: base.Classifier = None,
@@ -25,21 +26,25 @@ class TemporallyAugmentedFeaturesClassifier(base.Classifier, ABC):
         self._old_features_inference = []
 
     def learn_one(self, x: dict, y: base.typing.ClfTarget, **kwargs) -> "Classifier":
+        """Train on one example with training history and return the base learner."""
         x_ext = self._extend_with_old_features(x, True)
         self._base_learner.learn_one(x_ext, y)
         self._update_past_features(x, True)
         return self._base_learner
 
     def predict_one(self, x: dict) -> base.typing.ClfTarget:
+        """Predict one label using inference history, then record the feature vector."""
         x_ext = self._extend_with_old_features(x, False)
         y_hat = self._base_learner.predict_one(x_ext)
         self._update_past_features(x, False)
         return y_hat
 
     def predict_many(self, x_batch: list):
+        """Predict each example in stream order and return a NumPy array."""
         return np.array([self.predict_one(item) for item in x_batch])
 
     def learn_many(self, x_batch: list, y_batch: list):
+        """Train on feature-label pairs in stream order and return the base learner."""
         for x_item, y_item in zip(x_batch, y_batch):
             self.learn_one(x_item, y_item)
         return self._base_learner
@@ -71,5 +76,6 @@ class TemporallyAugmentedFeaturesClassifier(base.Classifier, ABC):
         return x_ext
 
     def reset_previous_data_points(self):
+        """Clear both training and inference feature histories."""
         self._old_features_training = []
         self._old_features_inference = []

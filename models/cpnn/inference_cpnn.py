@@ -4,6 +4,7 @@ from river import metrics
 
 
 class InferenceCPNN:
+    """Select a cPNN column online for task-agnostic inference."""
     def __init__(self, model: cPNN, ensemble_data_points=128 * 2):
         """
         It implements a wrapper on a cPNN model to perform inference when the task label is not known.
@@ -91,6 +92,7 @@ class InferenceCPNN:
             self.predictions = {}
 
     def initialize(self):
+        """Restore all columns and start selection from the latest one."""
         self.predictions = {}
         self.metrics = [
             metrics.CohenKappa() for _ in range(len(self.model.columns.columns))
@@ -100,6 +102,7 @@ class InferenceCPNN:
         self.count = 0
 
     def reset_previous_data_points(self):
+        """Clear temporal context and restart selection with all columns."""
         self.model.reset_previous_data_points()
         self._previous_data_points = None
         self.predictions = {}
