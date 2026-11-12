@@ -173,6 +173,12 @@ Each job has its own `run.log` in a directory with the same name as its
 results directory under `performance/gru/`, such as
 `weather_3conf_75prec_100rec`.
 
+Both launchers also write a `status.txt` beside `queue.log`.
+`outputs/gru/status.txt` shows the current campaign queue and
+`outputs/prepare_detections/status.txt` shows the current detection queue.
+The file is refreshed when a job starts or finishes. It lists running,
+completed and failed jobs, followed by pending jobs in launch order.
+
 `EvaluatePrequential` evaluates only `anytime_learners`, through `predict_one`
 and `learn_one`. Batch learners and the periodic evaluation scenario have been
 removed. The `_anytime` keys and output filenames are retained for CL evaluation

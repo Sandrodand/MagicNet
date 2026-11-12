@@ -6,7 +6,7 @@ import json
 from pathlib import Path
 import subprocess
 import sys
-from tempfile import TemporaryDirectory
+from tempfile import NamedTemporaryFile, TemporaryDirectory
 import time
 
 from evaluation.test import PARAMETERS
@@ -60,6 +60,28 @@ def create_jobs(campaign, directory):
     return [job_file for _, _, job_file in sorted(jobs)]
 
 
+def write_status(path, pending, active, completed, failed):
+    """Publish a readable snapshot of the queue without exposing partial writes."""
+    sections = (
+        ("RUNNING", [f"{name} (PID {process.pid})" for process, name in active.items()]),
+        ("COMPLETED", completed),
+        ("FAILED", failed),
+        ("TODO", [job_file.stem for job_file in pending]),
+    )
+    with NamedTemporaryFile(mode="w", encoding="utf-8", dir=path.parent, delete=False) as file:
+        temporary = Path(file.name)
+        try:
+            for title, names in sections:
+                print(f"{title} ({len(names)})", file=file)
+                for name in names:
+                    print(f"  {name}", file=file)
+                print(file=file)
+            file.close()
+            temporary.replace(path)
+        finally:
+            temporary.unlink(missing_ok=True)
+
+
 def run_jobs(module, job_files, output, workers=4, log_name="run.log"):
     """Run parameter files in order and collect queue and process logs."""
     if workers < 1:
@@ -67,22 +89,27 @@ def run_jobs(module, job_files, output, workers=4, log_name="run.log"):
     if Path(log_name).name != log_name or log_name == "..":
         raise ValueError("OUTPUT_FILE must be a filename")
     output.mkdir(parents=True, exist_ok=True)
+    status = output / "status.txt"
 
     with (output / "queue.log").open("a", buffering=1) as queue_log:
         pending = deque(job_files)
         active = {}
-        failed = 0
+        completed = []
+        failed = []
         print(f"Starting {len(pending)} jobs with {workers} slots", file=queue_log)
+        write_status(status, pending, active, completed, failed)
         try:
             while pending or active:
                 while pending and len(active) < workers:
-                    job_file = pending.popleft()
+                    job_file = pending[0]
                     log_path = output / job_file.stem / log_name
                     log_path.parent.mkdir(exist_ok=True)
                     command = [sys.executable, "-u", "-m", module, "--config", str(job_file)]
                     with log_path.open("a") as log:
                         process = subprocess.Popen(command, stdout=log, stderr=subprocess.STDOUT)
+                    pending.popleft()
                     active[process] = job_file.stem
+                    write_status(status, pending, active, completed, failed)
                     print(
                         f"Started {job_file.stem} (PID {process.pid}) - {log_path}"
                         f" | {len(active)} active, {len(pending)} queued",
@@ -93,7 +120,11 @@ def run_jobs(module, job_files, output, workers=4, log_name="run.log"):
                     code = process.poll()
                     if code is not None:
                         del active[process]
-                        failed += int(code != 0)
+                        if code == 0:
+                            completed.append(name)
+                        else:
+                            failed.append(f"{name} (exit {code})")
+                        write_status(status, pending, active, completed, failed)
                         print(
                             f"Finished {name} (exit {code})"
                             f" | {len(active)} active, {len(pending)} queued",
@@ -105,10 +136,17 @@ def run_jobs(module, job_files, output, workers=4, log_name="run.log"):
             for process in active:
                 if process.poll() is None:
                     process.terminate()
-            for process in active:
-                process.wait()
-        print(f"Queue complete, {failed} failed", file=queue_log)
-    return int(failed > 0)
+            for process, name in active.items():
+                code = process.wait()
+                if code == 0:
+                    completed.append(name)
+                else:
+                    failed.append(f"{name} (exit {code})")
+            if active:
+                active.clear()
+                write_status(status, pending, active, completed, failed)
+        print(f"Queue complete, {len(failed)} failed", file=queue_log)
+    return int(bool(failed))
 
 
 def run(campaign_file, workers=4):
