@@ -16,6 +16,7 @@ class DetectorSimulator:
         min_delay=0,
         max_delay=128 * 50,
         margin=None,
+        after_prediction=False,
     ):
         """
 
@@ -38,8 +39,11 @@ class DetectorSimulator:
         margin: int, default: None
             If detections is None, it represents the additional data points following a real drift and the max_delay
             from which to generate the false positives. If None it considers max_delay * 2.
+        after_prediction: bool, default: False
+            Replay saved Sentinel alarms after prediction.
         """
         self.cont = 0
+        self.after_prediction = after_prediction
         if detections is not None:
             self.drifts = detections
             return

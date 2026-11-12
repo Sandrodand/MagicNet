@@ -51,16 +51,133 @@ It contains the python modules to implement the prequential evaluation used for 
 detectors/detector_simulator.py contains the class DetectorSimulator that simulates a concept drift detector given a data stream and target precision and recall values.
 
 ## 3) Running the experiments
-#### evaluation/test.py
-It runs the prequential evaluation and CL evaluation using the specified configurations. Change the variables in the code for different settings (see the code's comments for the details).
+### Running an evaluation
 
-Run it with the command `python -m evaluation.test`.
+Run `python -m evaluation.test` from the project root to use the
+`PARAMETERS` dictionary in [evaluation/test.py](evaluation/test.py).
+To use a complete JSON parameter file, run
+`python -m evaluation.test --config path/to/job.json`. The JSON uses the
+same keys as `PARAMETERS` and represents Python `None` as JSON `null`.
+
+### Evaluation parameters
+
+The defaults below refer to the manual runner.
+
+#### Input, evaluation, and output
+
+| Parameter | Default | What it controls |
+| --- | --- | --- |
+| `MODE` | `"local"` | `"local"` displays progress in the terminal. `"aws"` prints progress on separate lines and, for manual runs, redirects stdout to a text file under `outputs/`. The campaign launcher captures stdout and stderr in the job log. |
+| `PATHS` | Weather configurations 1–10 under `datasets/` | List of stream paths without the CSV extension or the train and test suffixes. For example, use `datasets/weather_3conf`. The launcher sets a single stream path per job. |
+| `PATH_PERFORMANCE` | `"debug_ensemble"` | Results directory. Relative paths are placed under `performance/`. Absolute paths are used directly. Each stream or campaign job gets a subdirectory. |
+| `DO_CL` | `True` | Run continual-learning evaluation after each prequential iteration. With `True`, the runner reads `<path>_train.csv` and `<path>_test.csv`. With `False`, it reads `<path>.csv` for prequential evaluation. |
+| `ITERATIONS` | `1` | Number of prequential evaluation repetitions per stream. Each repetition starts with fresh learner instances. |
+| `WRITE_CHECKPOINTS` | `True` | Write the evaluation checkpoints to disk in `checkpoints<suffix>_it<iteration>.pkl`. CL evaluation can still use its in-memory checkpoints when disk writing is disabled. |
+| `PREPROCESS` | `None` | Optional Python object for prequential feature preprocessing. It must provide `preprocess(x)` and `reset()`. Use `null` in a JSON job file. |
+| `DELAY_PARAM` | `None` | Number of stream points between receiving a feature vector and receiving its label. Use `0` for immediate labels or `None` for the dataset default in `set_delay()`. |
+| `CALLBACK_FUNC` | `None` | Optional Python callback invoked at the end of each prequential iteration when `DO_CL=False`. With `DO_CL=True`, the runner uses the CL evaluator's callback. Use `null` in a JSON job file. |
+| `OUTPUT_FILE` | `None` | Manual AWS runs use `outputs/<OUTPUT_FILE>.txt`, deriving the name from the first stream and simulated detector rates when unset. Campaigns use this as the log filename inside each job directory and default to `run.log`. |
+| `suffix` | `""` | Optional string appended to result filenames. For example, `"_trial2"` produces `performance_trial2.pkl`. Learner names include the recurrent architecture, such as `MAGIC_Net_gru`. |
+| `JOB_NAME` | `None` | Name of the job's results subdirectory. The launcher sets it to the name shared by the results and log directories. Use `None` for manual runs. |
+
+#### Drift detection
+
+| Parameter | Default | What it controls |
+| --- | --- | --- |
+| `USE_DETECTOR` | `True` | Use simulated or Sentinel detections. Set `False` to use the supervised drift boundaries from the CSV's `task` column in a manual run. |
+| `DETECTOR_SIMULATOR_PRECISION` | `0.7` | Target fraction of simulated alarms that correspond to a true drift. Use a fraction such as `0.75` for 75%. The simulator rounds to an integer number of alarms. |
+| `DETECTOR_SIMULATOR_RECALL` | `1` | Target fraction of true drifts that trigger a simulated alarm. The simulator rounds to an integer number of detected drifts. With `USE_DETECTOR=True`, setting both precision and recall to `None` selects Sentinel. |
+| `DETECTOR_SIMULATOR_MIN_DELAY` | `0` | Inclusive lower bound on the number of points after a true drift when the simulator can place a matching alarm. |
+| `DETECTOR_SIMULATOR_MAX_DELAY` | `1000` | Exclusive upper bound on that simulated delay. The default interval is 0–999 points, including for 100/100. The runner also uses this parameter to configure rollback for simulated conditions. |
+| `LOAD_DETECTIONS` | `False` | Replay saved alarm indices when enabled. With `False`, the runner generates simulated alarms, runs Sentinel live, or uses supervised boundaries according to the selected detector. Saved Sentinel alarms are applied at their recorded index after prediction and before training. |
+| `PATH_LOAD_DETECTIONS` | `None` | Root of the saved detections. With a separate root, the runner reads `<root>/<stream-or-job-name>/drifts.pkl`. With `None`, it uses the results root. When a campaign shares the input and results root, its input file is `prepared_drifts.pkl` inside the job directory. The pickle contains detection lists by iteration and the runner reuses the first list. |
+
+#### Base learners and model dimensions
+
+| Parameter | Default | What it controls |
+| --- | --- | --- |
+| `SAVE_BASE_LEARNER` | `True` | Save the initial recurrent model for each architecture and stream, before evaluation training. With loading enabled, an existing architecture-specific archive is reused. |
+| `PATH_BASE_LEARNER` | `""` | Root directory for initial model archives. Relative paths are placed under `base_learner/`. For example, the default GRU archive for a CL run on Weather configuration 3 is `base_learner/gru/weather_3conf_train.pkl`. |
+| `UPLOAD_BASE_LEARNER` | `True` | Try to load a compatible local base learner archive. If no archive is found, initialize a fresh model. Set `False` to start from a fresh initialization even when an archive exists. |
+| `BASE_RNN` | `["gru"]` | Recurrent architectures to evaluate. Use `["gru"]`, `["lstm"]`, or `["gru", "lstm"]`. Each architecture runs the selected recurrent methods on the same stream and detector signal. |
+| `SEQ_LEN_PARAM` | `None` | Number of points in the recurrent input sequence. Use `None` for the dataset default. MAGIC Net and MultiHeadCRNN require a sequence length of at least 2. |
+| `BATCH_SIZE_PARAM` | `None` | Number of labeled points per recurrent training minibatch. The evaluator also uses this value to convert rolling metric windows from minibatches to points. `None` uses the dataset default. |
+| `HIDDEN_SIZE_PARAM` | `{"gru": None, "lstm": None}` | Initial recurrent hidden size for each architecture. A `None` entry uses the dataset and architecture default. |
+| `MAX_OLD_LABELS` | `20` | Maximum history length used for temporal augmentation. The runner uses `min(sequence_length - 1, MAX_OLD_LABELS)` for the temporal order. |
+| `NUM_CLASSES` | `None` | Number of outputs in the classification head. `None` uses the dataset default. |
+
+#### Drift ensembles
+
+Each dictionary in this table must contain an entry for every architecture
+listed in `BASE_RNN`.
+
+| Parameter | Default | What it controls |
+| --- | --- | --- |
+| `ENSEMBLE_BATCHES` | `{"gru": 50, "lstm": 50}` | Length of the candidate comparison after a detection in MAGIC Net, MultiHeadCRNN, and DYNcPNN, expressed in minibatches. |
+| `SELECTION_BATCHES` | `{"gru": 40, "lstm": 40}` | Rolling Cohen's Kappa window for selecting a MAGIC Net or MultiHeadCRNN candidate during the comparison and at its end, expressed in minibatches. |
+| `DYNCPNN_SELECTION_BATCHES` | `{"gru": 40, "lstm": 40}` | Rolling Cohen's Kappa window for selecting a DYNcPNN candidate during the comparison and at its end, expressed in minibatches. |
+| `HIDDEN_MULT` | `{"gru": None, "lstm": None}` | Number of recurrent units added by an expansion in MAGIC Net or MultiHeadCRNN. A `None` entry uses half the configured initial hidden size, rounded down. |
+| `ENSEMBLE_TH` | `{"gru": 1.05, "lstm": 1.05}` | Multiplier for accepting an expansion in MAGIC Net or MultiHeadCRNN. The expansion's Kappa must strictly exceed both the best non-expansion Kappa and that score multiplied by this value. |
+
+#### Learners
+
+| Parameter | Default | What it controls |
+| --- | --- | --- |
+| `RNN_LEARNERS` | `["MAGIC_Net"]` | Recurrent methods instantiated for each architecture in `BASE_RNN`. Available names are `cRNN`, `cPNN`, `DYNcPNN`, `MAGIC_Net`, `MAGIC_Net_sh`, `MAGIC_Net_binary`, `MAGIC_Net_no_ignore`, `MAGIC_Net_no_expand`, `MultiHeadCRNN_frozen`, and `MultiHeadCRNN_learnable`. |
+| `STREAM_LEARNERS` | `[]` | Optional stream baselines instantiated once per job. Available names are `ARF`, `ARF_TA`, `HAT`, and `HAT_TA`. |
+
+### Running a campaign
+
+Prepare the shared inputs from the project root.
+
+```bash
+python -m evaluation.prepare_base_learner
+python -m evaluation.prepare_detections
+```
+
+Both scripts read all JSON files in `evaluation/campaigns/` and reuse
+existing output files. Base learners are saved sequentially per stream and
+architecture. Detection files are prepared with up to four concurrent jobs
+and can be shared between GRU and LSTM.
+
+Follow `outputs/prepare_detections/queue.log` to see which detection jobs are
+running. Each detection job has its own log. Sentinel reports
+`processed/total` every 100 stream points and at the end of the stream.
+
+```bash
+tail -F outputs/prepare_detections/weather_3conf_sentinel/run.log
+```
+
+```bash
+python -m evaluation.run_campaign --config evaluation/campaigns/weather_gru.json --workers 4
+```
+
+The campaign file overrides the manual defaults with common settings at its
+top level. `PATH_DATASET` is the dataset directory. Each row in `campaign`
+specifies `dataset`, `configurations`, `detector`, `load_detections`,
+`rnn_learners`, and `stream_learners`. Use an explicit list such as
+`[1, 3, 5]` or an inclusive range such as `{"range": [1, 20]}` for
+`configurations`. A detector pair such as `[0.75, 1.0]` selects simulated
+precision and recall. Use `"sentinel"` for Sentinel and `"supervised"` or
+`false` for supervised boundaries.
+
+The launcher writes a temporary parameter file for each job and passes it to
+`evaluation.test --config`. It starts 100/100 first, then Sentinel, then
+the other simulated conditions by descending precision and recall, followed
+by supervised conditions. Configurations are ordered numerically within each
+condition. `--workers` limits the number of concurrent jobs and defaults to
+four. The launcher removes the temporary files when the queue ends.
+
+Follow `outputs/gru/queue.log` to see which jobs have started and finished.
+Each job has its own `run.log` in a directory with the same name as its
+results directory under `performance/gru/`, such as
+`weather_3conf_75prec_100rec`.
 
 `EvaluatePrequential` evaluates only `anytime_learners`, through `predict_one`
 and `learn_one`. Batch learners and the periodic evaluation scenario have been
 removed. The `_anytime` keys and output filenames are retained for CL evaluation
-and existing result analysis. Its `batch_size` still sets rolling metric windows
-and output filenames; recurrent learners manage their training mini-batches.
+and existing result analysis. Its `batch_size` sets rolling metric windows.
+Recurrent learners manage their training minibatches.
 
 ### Streaming API and delayed labels
 
@@ -146,16 +263,12 @@ intact. During the first `seq_len - 1` points, the underlying models return
 
 ### Comparing multiple recurrent backbones
 
-In `evaluation/test.py`, choose the architectures and their settings independently:
+Set these entries in `PARAMETERS` in `evaluation/test.py`:
 
 ```python
-BASE_RNN = ["gru", "lstm"]
-HIDDEN_SIZE_PARAM = {"gru": None, "lstm": None}
-HIDDEN_MULT = {"gru": None, "lstm": None}
-ENSEMBLE_BATCHES = {"gru": 30, "lstm": 30}
-ENSEMBLE_TH = {"gru": 1.05, "lstm": 1.05}
-RNN_LEARNERS = ["MAGIC_Net", "MultiHeadCRNN", "DYNcPNN"]
-STREAM_LEARNERS = []  # Optional ARF, ARF_TA, HAT, HAT_TA; included once.
+PARAMETERS["BASE_RNN"] = ["gru", "lstm"]
+PARAMETERS["HIDDEN_SIZE_PARAM"] = {"gru": None, "lstm": None}
+PARAMETERS["RNN_LEARNERS"] = ["MAGIC_Net", "MultiHeadCRNN_frozen", "DYNcPNN"]
 ```
 
 `None` selects the dataset/architecture default. Sequence length, batch size,
@@ -169,7 +282,7 @@ for example `MAGIC_Net_binary_sh_lstm: cancels the grace period`. Constructors
 and factories accept a custom `name`; assigning `model.name` also updates MAGIC's
 manager so subsequent messages use the new identifier.
 
-`Config(base_rnn=BASE_RNN)` stores `hidden_size`, `hidden_mult`,
+`Config(base_rnn=PARAMETERS["BASE_RNN"])` stores `hidden_size`, `hidden_mult`,
 `ensemble_batches`, `ensemble_th` and `base_learner` by RNN key. Factories accept
 `rnn="gru"` or `rnn="lstm"`; omitting it is supported only for a single-RNN
 configuration. `create_learners()` binds each factory explicitly to its RNN.
@@ -184,16 +297,17 @@ legacy flat archive is reused only for its own architecture and may be copied
 into the corresponding subdirectory. Incompatible typed archives raise an error
 instead of being silently replaced.
 
-### Head-only ablation (no weight masks)
+### MultiHeadCRNN ablations
 
-Include `"MultiHeadCRNN"` in `RNN_LEARNERS` to compare the ablation for every
-selected architecture. For direct construction of a single entry:
+Include `"MultiHeadCRNN_frozen"` or `"MultiHeadCRNN_learnable"` in
+`RNN_LEARNERS` to compare these ablations for every selected architecture.
+For direct construction of a frozen-backbone entry:
 
 ```python
 from functools import partial
 
 LearnerConfig(
-    name="MultiHeadCRNN_lstm",
+    name="MultiHeadCRNN_frozen_lstm",
     model=partial(CFG.create_multihead_crnn_frozen, rnn="lstm"),
     drift=True,
     magic=True,
@@ -204,18 +318,18 @@ The factory reuses the initialized base learner shared by the other methods,
 including its recurrent weights and initial linear head. Both GRU and LSTM
 entries in `BASE_RNN` are supported through `cGRULinear` and `cLSTMLinear`.
 
-At every drift, `Ignore` continues training the current model, while `Expand`
-retrieves the pre-drift checkpoint, freezes its backbone and trains a new head.
-The backbone remains trainable until `Expand` is first selected; afterwards,
-`Ignore` only fine tunes the current head. Expansion must outperform `Ignore`
-and exceed its score multiplied by `ENSEMBLE_TH`; ties choose `Ignore`.
-There is no increase in recurrent hidden size.
+The drift ensemble compares `Ignore`, `HeadOnly`, and `Expand` when all
+candidates are enabled. `HeadOnly` adds a head at the current width.
+`Expand` increases the recurrent hidden size and adds a head. The frozen
+variant starts these two candidates from rollback and freezes the existing
+backbone parameters. The learnable variant starts from the current model
+and keeps the recurrent weights trainable. `ENSEMBLE_TH` applies to
+`Expand` against the better of the available non-expansion candidates.
 
-If `Ignore` wins, the pre-drift model is retrieved using MAGIC's delayed checkpoint
-mechanism through `restore_previous_state()` / `get_previous_state()`. The full
-snapshot is archived only when the old-concept Kappa comparison described above
-justifies retaining it. This includes both backbone and head. Checkpoint frequency,
-detector delay and grace period follow the same behavior as MAGIC Net.
+If `Ignore` wins, the manager uses the pre-drift checkpoint for the
+old-concept Kappa comparison. Retention depends on that comparison and the
+freeze policy. The learnable variant retains historical heads, and the frozen
+variant can also retain a copy of a backbone that still had trainable weights.
 
 CL evaluation automatically uses `InferenceMultiHeadCRNN`, which evaluates
 every stored task with the appropriate backbone and head. Direct usage also

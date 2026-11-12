@@ -16,8 +16,7 @@ from evaluation.learner_config import LearnerConfig
 def make_dir(path):
     """Create a directory and its parents if a path is supplied and it does not exist."""
     if path is not None:
-        if not os.path.isdir(path):
-            os.makedirs(path)
+        os.makedirs(path, exist_ok=True)
 
 
 # noinspection DuplicatedCode
@@ -418,6 +417,10 @@ class EvaluatePrequential:
             self.drift_supervised = False
             self.drift_detected = False
             drift_detector = pickle.loads(pickle.dumps(self.drift_detector))
+            sentinel_replay = isinstance(drift_detector, DetectorSimulator) and getattr(
+                drift_detector, "after_prediction", False
+            )
+            label_based_detection = isinstance(drift_detector, Sentinel) or sentinel_replay
             self.detected_drifts.append([])
             for model in self.learners:
                 model_name = model.name + "_anytime"
@@ -464,12 +467,12 @@ class EvaluatePrequential:
                 self.drift_detected = False
                 if drift_detector is None:
                     self.drift_detected = self.drift_supervised
-                elif isinstance(drift_detector, DetectorSimulator):
+                elif isinstance(drift_detector, DetectorSimulator) and not sentinel_replay:
                     # Simulated timestamps refer to stream points, independently of label delay.
                     self.drift_detected = drift_detector.update(x, y)
-                elif not isinstance(drift_detector, Sentinel) and x_train is not None:
+                elif not label_based_detection and x_train is not None:
                     self.drift_detected = drift_detector.update(x_train, y_train)
-                if not supervised and not isinstance(drift_detector, Sentinel):
+                if not supervised and not label_based_detection:
                     self.drift_supervised = self.drift_detected
 
                 if self.drift_supervised:
@@ -480,7 +483,7 @@ class EvaluatePrequential:
                 self._predict(x, x_preproc, y, iteration, idx)
 
                 # Label-based detection must follow inference by every learner.
-                if isinstance(drift_detector, Sentinel) and x_train is not None:
+                if label_based_detection and (sentinel_replay or x_train is not None):
                     self.drift_detected = drift_detector.update(x_train, y_train)
                     if self.drift_detected:
                         if not supervised:
