@@ -291,7 +291,8 @@ class MagicNet:
         An active comparison or grace period suppresses the notification.
         task_id defaults to the previous ID plus one. Supply consecutive IDs
         when assigning them explicitly. Starting a comparison clears the
-        pending training minibatch. Temporal context is cleared when
+        pending training minibatch while keeping its latest seq_len - 1
+        observations as training context. Temporal context is cleared when
         reset_data_points is enabled.
         """
         if self.manager.in_expansion or self.manager.in_grace_period:
@@ -306,6 +307,15 @@ class MagicNet:
 
         if self.reset_data_points:
             self.reset_previous_data_points()
+        elif self.x_batch:
+            context = np.asarray(self.x_batch)
+            if self.previous_data_points_batch_train is not None:
+                context = np.concatenate(
+                    [self.previous_data_points_batch_train, context], axis=0
+                )
+            self.previous_data_points_batch_train = context[
+                -(self.seq_len - 1) :
+            ].copy()
 
         self.x_batch = []
         self.y_batch = []
@@ -337,7 +347,9 @@ class MagicNet:
 
         if self.previous_data_points_batch_train is not None:
             x = np.concatenate([self.previous_data_points_batch_train, x], axis=0)
-            y = np.concatenate([[i for i in range(self.seq_len - 1)], y], axis=0)
+            y = np.concatenate(
+                [np.zeros(len(self.previous_data_points_batch_train), dtype=int), y]
+            )
         self.previous_data_points_batch_train = x[-(self.seq_len - 1) :]
         x, y, _ = self._load_batch(x, y)
         y = y[self.seq_len - 1 :]

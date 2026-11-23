@@ -403,7 +403,9 @@ class cPNN:
         if self.loss_on_seq:
             if self.previous_data_points_batch_train is not None:
                 x = np.concatenate([self.previous_data_points_batch_train, x], axis=0)
-                y = np.concatenate([[i for i in range(self.seq_len - 1)], y], axis=0)
+                y = np.concatenate(
+                    [np.zeros(len(self.previous_data_points_batch_train), dtype=int), y]
+                )
             self.previous_data_points_batch_train = x[-(self.seq_len - 1) :]
         x, y, _ = self._load_batch(x, y)
         if self.loss_on_seq:

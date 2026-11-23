@@ -37,6 +37,7 @@ class SingleModel:
 
 class ModelEnsemble:
     """Identify a cPNN column and whether it can train during a comparison."""
+
     def __init__(
         self,
         model: cPNN,
@@ -454,6 +455,8 @@ class DynamicCPNN:
         column, the current model with a new column and the stored models with a new column.
         If a drift is already in evaluation it ignores the new drift detection. The same happens during
         the grace period (a configurable number of data points following the last accepted drift detection).
+        All candidates restart their training minibatches, retaining the latest
+        seq_len - 1 labeled observations as context unless reset_data_points is enabled.
 
         Parameters
         ----------
@@ -487,6 +490,13 @@ class DynamicCPNN:
             )
             self.choices = sorted(self.choices, key=lambda c: c["cont"])
         else:
+            current = self.ensemble[0].model
+            context = []
+            if current.previous_data_points_batch_train is not None:
+                context.extend(current.previous_data_points_batch_train)
+            context.extend(current.x_batch)
+            context = np.asarray(context) if context else None
+
             if self.store_models:
                 # We store the model before the drift to check if in future we will lose the predictive ability
                 # on that concept.
@@ -506,10 +516,6 @@ class DynamicCPNN:
             model_new = pickle.loads(pickle.dumps(self.ensemble[0].model))
             model_new.add_new_column()
 
-            # Align Ignore's next training minibatch with the other candidates.
-            self.models[0].model.x_batch = []
-            self.models[0].model.y_batch = []
-
             # we build the ensemble:
             # the first model is the current model without adding a new column
             # then, we add all the other stored models (with the addition of a new column)
@@ -527,6 +533,16 @@ class DynamicCPNN:
                 ]
                 + [ModelEnsemble(model_new, model_type=0, train=True, model_idx=0)]
             )
+            # Use contiguous stream context, including the discarded partial batch.
+            for candidate in self.ensemble:
+                model = candidate.model
+                model.x_batch = []
+                model.y_batch = []
+                model.previous_data_points_batch_train = (
+                    context[-(model.seq_len - 1) :].copy()
+                    if context is not None and not model.reset_data_points
+                    else None
+                )
             self.predictions = {}
             self.metrics = [metrics.CohenKappa() for _ in self.ensemble]
             self._reset_rolling_metrics()
