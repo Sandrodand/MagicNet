@@ -1,4 +1,3 @@
-import datetime
 import os
 import pickle
 from typing import List
@@ -88,7 +87,7 @@ class EvaluateContinualLearning:
             df_task = self.dataset[self.dataset["task"] == task].drop(columns="task")
             self.X.append(df_task.iloc[:, :-1].values)
             self.Y.append(df_task.iloc[:, -1].values)
-        self.metric_names = ["kappa", "accuracy", "time", "memory"]
+        self.metric_names = ["kappa", "accuracy", "memory"]
         model_names = [a.name for a in self.learners_config]
         self.metric_tables = {
             model: {
@@ -171,7 +170,8 @@ class EvaluateContinualLearning:
         -   metric_tables{suffix}.pkl:
             It's a dict d with the structure: d[model_name][metric][iteration].
             -   model_name is the name of the model specified in LearnerConfig.
-            -   metric can be 'kappa' for Cohen's Kappa, 'accuracy' for balanced accuracy, 'time' for time.
+            -   metric can be 'kappa' for Cohen's Kappa, 'accuracy' for balanced accuracy,
+                or 'memory' for model size.
             -   iteration is the index iteration (0 if you have only one iteration).
             The value is a matrix that in position (i,j) contains the metric of the model trained after the end of
             the true concept i and tested on the test set of the true concept j.
@@ -230,7 +230,6 @@ class EvaluateContinualLearning:
                     accuracy = metrics.BalancedAccuracy()
                     kappa = metrics.CohenKappa()
                     count = 1
-                    start = datetime.datetime.now()
                     buffer_y = Buffer(self.delay)
                     for idx, (x, y) in enumerate(
                         zip(self.X[task_test], self.Y[task_test])
@@ -270,15 +269,11 @@ class EvaluateContinualLearning:
                         f"{'{:04d}'.format(count-1)}/{len(self.X[task_test])}",
                         end=self.print_end,
                     )
-                    end = datetime.datetime.now()
                     self.metric_tables[model_name]["kappa"][iteration][-1].append(
                         kappa.get()
                     )
                     self.metric_tables[model_name]["accuracy"][iteration][-1].append(
                         accuracy.get()
-                    )
-                    self.metric_tables[model_name]["time"][iteration][-1].append(
-                        (end - start).microseconds
                     )
                 if not model_dict.cpnn and not model_dict.magic:
                     size = 0

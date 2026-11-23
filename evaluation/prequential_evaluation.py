@@ -1,5 +1,6 @@
 import pickle
 import datetime
+from time import perf_counter_ns
 from typing import List, Iterable, Callable
 
 import river.metrics as river_metrics
@@ -254,7 +255,7 @@ class EvaluatePrequential:
     def _learn(self, x_train, x_train_preproc, y_train, iteration, idx):
         for model in self.learners:
             model_name = model.name + "_anytime"
-            start = datetime.datetime.now()
+            start = perf_counter_ns()
             if x_train is not None:
                 if model.numeric:
                     x_ = list(x_train_preproc.values())
@@ -266,8 +267,8 @@ class EvaluatePrequential:
                     )
                 else:
                     self._eval[model_name]["alg"][iteration].learn_one(x_, y_train)
-            end = datetime.datetime.now()
-            self._perf[model_name]["time"][iteration].append((end - start).microseconds)
+            end = perf_counter_ns()
+            self._perf[model_name]["time"][iteration].append((end - start) // 1_000)
 
     def _write_pickles(self, iteration=0, write_checkpoints=False):
         for model in self.learners or []:
@@ -373,7 +374,8 @@ class EvaluatePrequential:
         -   performance{suffix}.pkl:
             A dict d indexed by '{name}_anytime'. The 'drifts' entry contains
             task boundary indices; 'time' and 'memory' contain per-iteration
-            measurements. The 'all', 'task', and rolling metric entries contain
+            measurements. 'time' stores learning durations in microseconds,
+            measured with a monotonic clock. The 'all', 'task', and rolling metric entries contain
             per-point metric values, indexed by metric and iteration.
         - predictions{suffix}.pkl:
             A dict d where d['{name}_anytime'][it] contains the predictions
