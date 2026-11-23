@@ -298,8 +298,6 @@ def main(params=None):
             for nome, valore in vars(eval_preq).items():
                 print(f"{nome} = {valore}")
             print()
-            #TODO
-            continue
 
             eval_preq.evaluate(callback=callback_func, initial_task=initial_task)
 

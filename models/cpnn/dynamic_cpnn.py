@@ -506,6 +506,10 @@ class DynamicCPNN:
             model_new = pickle.loads(pickle.dumps(self.ensemble[0].model))
             model_new.add_new_column()
 
+            # Align Ignore's next training minibatch with the other candidates.
+            self.models[0].model.x_batch = []
+            self.models[0].model.y_batch = []
+
             # we build the ensemble:
             # the first model is the current model without adding a new column
             # then, we add all the other stored models (with the addition of a new column)
