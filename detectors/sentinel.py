@@ -16,6 +16,7 @@ class Sentinel:
         evaluator=None,
         numeric_evaluator=False,
         training_data_points=-1,
+        monitor="error"
     ):
         """
         Parameters
@@ -30,6 +31,11 @@ class Sentinel:
             Number of training data points during which the evaluator is trained. In this case the model is trained
             only on the first training_data_points of the concept and then run only in inference mode.
             If -1 the evaluator is trained continuously on all the data points in test then train mode.
+        monitor: str, default= 'error'
+            If 'error', the Sentinel monitors the distribution of a binary variable where 1 indicates a prediction error
+            and 0 indicates a correct prediction.
+            If 'accuracy', the binary variable is defined inversely: 1 indicates a correct prediction
+            and 0 indicates an error.
         """
         self.count = 0
         self.drift_detected = False
@@ -42,8 +48,12 @@ class Sentinel:
             self.evaluator = create_arf_no_adwin()
         else:
             self.evaluator = pickle.loads(pickle.dumps(evaluator))
-        self.model_copy = pickle.loads(pickle.dumps(evaluator))
+        self.model_copy = pickle.loads(pickle.dumps(self.evaluator))
         self.training_data_points = training_data_points
+        monitor = monitor.lower()
+        self.monitor_error = True
+        if monitor == 'accuracy':
+            self.monitor_error = False
 
     def update(self, x, y):
         """
@@ -78,7 +88,11 @@ class Sentinel:
         if self.count >= self.training_data_points:
             y_hat = self.evaluator.predict_one(x)
             if y_hat is not None:
-                self.error_rate_monitor.update(int(y == y_hat))
+                if self.monitor_error:
+                    variable = int(y != y_hat)
+                else:
+                    variable = int(y == y_hat)
+                self.error_rate_monitor.update(variable)
                 self.drift_detected = self.error_rate_monitor.drift_detected
             else:
                 self.drift_detected = False

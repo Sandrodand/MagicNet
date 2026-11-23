@@ -20,8 +20,8 @@ def create_jobs(campaign, directory):
             defaults[key] = campaign[key]
 
     jobs = []
-    for row in campaign["campaign"]:
-        detector = row["detector"]
+    for row in campaign["CAMPAIGN"]:
+        detector = row["DETECTOR"]
         precision = recall = None
         if isinstance(detector, list):
             precision, recall = detector
@@ -36,21 +36,21 @@ def create_jobs(campaign, directory):
         else:
             raise ValueError(f"Unknown detector: {detector}")
 
-        configurations = row["configurations"]
+        configurations = row["CONFIGURATIONS"]
         if isinstance(configurations, dict):
-            first, last = configurations["range"]
+            first, last = configurations["RANGE"]
             configurations = range(first, last + 1)
         for number in configurations:
-            stream = f"{row['dataset']}_{number}conf"
+            stream = f"{row['DATASET']}_{number}conf"
             name = f"{stream}_{condition}"
             params = defaults.copy()
             params["PATHS"] = [str(Path(campaign["PATH_DATASET"]) / stream)]
             params["USE_DETECTOR"] = condition != "supervised"
             params["DETECTOR_SIMULATOR_PRECISION"] = precision
             params["DETECTOR_SIMULATOR_RECALL"] = recall
-            params["LOAD_DETECTIONS"] = row["load_detections"]
-            params["RNN_LEARNERS"] = row["rnn_learners"]
-            params["STREAM_LEARNERS"] = row["stream_learners"]
+            params["LOAD_DETECTIONS"] = row["LOAD_DETECTIONS"]
+            params["RNN_LEARNERS"] = row["RNN_LEARNERS"]
+            params["STREAM_LEARNERS"] = row["STREAM_LEARNERS"]
             params["JOB_NAME"] = name
             job_file = directory / f"{name}.json"
             with job_file.open("x", encoding="utf-8") as file:
@@ -62,6 +62,10 @@ def create_jobs(campaign, directory):
 
 def write_status(path, pending, active, completed, failed):
     """Publish a readable snapshot of the queue without exposing partial writes."""
+    total = len(pending) + len(active) + len(completed) + len(failed)
+    completed_percent = len(completed) / total if total else 0
+    failed_percent = len(failed) / total if total else 0
+    todo_percent = len(pending) / total if total else 0
     sections = (
         ("RUNNING", [f"{name} (PID {process.pid})" for process, name in active.items()]),
         ("COMPLETED", completed),
@@ -71,8 +75,13 @@ def write_status(path, pending, active, completed, failed):
     with NamedTemporaryFile(mode="w", encoding="utf-8", dir=path.parent, delete=False) as file:
         temporary = Path(file.name)
         try:
+            print(f"COMPLETED: {len(completed)}/{total}, {completed_percent:.1%}", file=file)
+            print(f"FAILED: {len(failed)}/{total}, {failed_percent:.1%}", file=file)
+            print(f"TODO: {len(pending)}/{total}, {todo_percent:.1%}", file=file)
+            print(f"RUNNING: {len(active)}", file=file)
+            print(file=file)
             for title, names in sections:
-                print(f"{title} ({len(names)})", file=file)
+                print(f"{title} PROCESSES ({len(names)}):", file=file)
                 for name in names:
                     print(f"  {name}", file=file)
                 print(file=file)
@@ -82,13 +91,12 @@ def write_status(path, pending, active, completed, failed):
             temporary.unlink(missing_ok=True)
 
 
-def run_jobs(module, job_files, output, workers=4, log_name="run.log"):
+def run_jobs(module, job_files, output, workers=4):
     """Run parameter files in order and collect queue and process logs."""
     if workers < 1:
         raise ValueError("workers must be positive")
-    if Path(log_name).name != log_name or log_name == "..":
-        raise ValueError("OUTPUT_FILE must be a filename")
-    output.mkdir(parents=True, exist_ok=True)
+    processes = output / "processes"
+    processes.mkdir(parents=True, exist_ok=True)
     status = output / "status.txt"
 
     with (output / "queue.log").open("a", buffering=1) as queue_log:
@@ -102,8 +110,7 @@ def run_jobs(module, job_files, output, workers=4, log_name="run.log"):
             while pending or active:
                 while pending and len(active) < workers:
                     job_file = pending[0]
-                    log_path = output / job_file.stem / log_name
-                    log_path.parent.mkdir(exist_ok=True)
+                    log_path = processes / f"{job_file.stem}.log"
                     command = [sys.executable, "-u", "-m", module, "--config", str(job_file)]
                     with log_path.open("a") as log:
                         process = subprocess.Popen(command, stdout=log, stderr=subprocess.STDOUT)
@@ -153,12 +160,11 @@ def run(campaign_file, workers=4):
     """Expand a campaign into temporary files and run the evaluation jobs."""
     with open(campaign_file, encoding="utf-8") as file:
         campaign = json.load(file)
-    results = Path(campaign.get("PATH_PERFORMANCE", PARAMETERS["PATH_PERFORMANCE"]))
-    output = Path("outputs") / (results.name or Path(campaign_file).stem)
+    output = Path("outputs") / Path(campaign_file).stem
     with TemporaryDirectory() as directory:
         return run_jobs(
             "evaluation.test", create_jobs(campaign, Path(directory)), output,
-            workers, campaign.get("OUTPUT_FILE") or "run.log",
+            workers,
         )
 
 

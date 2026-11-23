@@ -13,7 +13,7 @@ from evaluation.default_parameters import *
 PARAMETERS = {
     "MODE": "local",
     "PATHS": [f"datasets/weather_{conf}conf" for conf in range(1, 11)],
-    "PATH_PERFORMANCE": "debug_ensemble",
+    "PATH_PERFORMANCE": "",
     "USE_DETECTOR": True,
     # Use None for both rates to run Sentinel.
     "DETECTOR_SIMULATOR_PRECISION": 0.7,
@@ -44,7 +44,7 @@ PARAMETERS = {
     "ITERATIONS": 1,
     "CALLBACK_FUNC": None,
     "OUTPUT_FILE": None,
-    "suffix": "",
+    "SUFFIX": "",
     "RNN_LEARNERS": ["MAGIC_Net"],
     "STREAM_LEARNERS": [],
     # The launcher supplies the shared name for the result and log directories.
@@ -53,7 +53,7 @@ PARAMETERS = {
 
 
 def main(params=None):
-    """Run prequential and continual-learning evaluation with the given parameters."""
+    """Run prequential and continual learning evaluation with the given parameters."""
     if params is None:
         params = PARAMETERS
     CFG = Config(base_rnn=params["BASE_RNN"])
@@ -72,7 +72,7 @@ def main(params=None):
     num_classes = params["NUM_CLASSES"]
     hidden_sizes = params["HIDDEN_SIZE_PARAM"]
     hidden_additions = params["HIDDEN_MULT"]
-    run_suffix = params["suffix"]
+    run_suffix = params["SUFFIX"]
     job_name = params["JOB_NAME"]
     for name, values in (
         ("HIDDEN_SIZE_PARAM", hidden_sizes),
@@ -279,6 +279,27 @@ def main(params=None):
                 callback_func = eval_cl.evaluate
 
             CFG.initialize_callback(eval_cl, eval_preq)
+
+            print()
+            print("PARAMETERS")
+            for nome, valore in params.items():
+                print(f"{nome} = {valore}")
+            print()
+            print("CFG")
+            for nome, valore in vars(CFG).items():
+                print(f"{nome} = {valore}")
+            for rnn in CFG.base_learner:
+                print()
+                print("BASE LEARNER ", rnn)
+                for nome, valore in vars(CFG.base_learner[rnn].get_base_learner()).items():
+                    print(f"{nome} = {valore}")
+            print()
+            print("EVAL")
+            for nome, valore in vars(eval_preq).items():
+                print(f"{nome} = {valore}")
+            print()
+            #TODO
+            continue
 
             eval_preq.evaluate(callback=callback_func, initial_task=initial_task)
 

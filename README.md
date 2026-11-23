@@ -76,8 +76,8 @@ The defaults below refer to the manual runner.
 | `PREPROCESS` | `None` | Optional Python object for prequential feature preprocessing. It must provide `preprocess(x)` and `reset()`. Use `null` in a JSON job file. |
 | `DELAY_PARAM` | `None` | Number of stream points between receiving a feature vector and receiving its label. Use `0` for immediate labels or `None` for the dataset default in `set_delay()`. |
 | `CALLBACK_FUNC` | `None` | Optional Python callback invoked at the end of each prequential iteration when `DO_CL=False`. With `DO_CL=True`, the runner uses the CL evaluator's callback. Use `null` in a JSON job file. |
-| `OUTPUT_FILE` | `None` | Manual AWS runs use `outputs/<OUTPUT_FILE>.txt`, deriving the name from the first stream and simulated detector rates when unset. Campaigns use this as the log filename inside each job directory and default to `run.log`. |
-| `suffix` | `""` | Optional string appended to result filenames. For example, `"_trial2"` produces `performance_trial2.pkl`. Learner names include the recurrent architecture, such as `MAGIC_Net_gru`. |
+| `OUTPUT_FILE` | `None` | Manual AWS runs use `outputs/<OUTPUT_FILE>.txt`, deriving the name from the first stream and simulated detector rates when unset. Campaign logs use the generated job name. |
+| `SUFFIX` | `""` | Optional string appended to result filenames. For example, `"_trial2"` produces `performance_trial2.pkl`. Learner names include the recurrent architecture, such as `MAGIC_Net_gru`. |
 | `JOB_NAME` | `None` | Name of the job's results subdirectory. The launcher sets it to the name shared by the results and log directories. Use `None` for manual runs. |
 
 #### Drift detection
@@ -145,7 +145,7 @@ running. Each detection job has its own log. Sentinel reports
 `processed/total` every 100 stream points and at the end of the stream.
 
 ```bash
-tail -F outputs/prepare_detections/weather_3conf_sentinel/run.log
+tail -F outputs/prepare_detections/processes/weather_3conf_sentinel.log
 ```
 
 ```bash
@@ -153,11 +153,11 @@ python -m evaluation.run_campaign --config evaluation/campaigns/weather_gru.json
 ```
 
 The campaign file overrides the manual defaults with common settings at its
-top level. `PATH_DATASET` is the dataset directory. Each row in `campaign`
-specifies `dataset`, `configurations`, `detector`, `load_detections`,
-`rnn_learners`, and `stream_learners`. Use an explicit list such as
-`[1, 3, 5]` or an inclusive range such as `{"range": [1, 20]}` for
-`configurations`. A detector pair such as `[0.75, 1.0]` selects simulated
+top level. `PATH_DATASET` is the dataset directory. Each row in `CAMPAIGN`
+specifies `DATASET`, `CONFIGURATIONS`, `DETECTOR`, `LOAD_DETECTIONS`,
+`RNN_LEARNERS`, and `STREAM_LEARNERS`. Use an explicit list such as
+`[1, 3, 5]` or an inclusive range such as `{"RANGE": [1, 20]}` for
+`CONFIGURATIONS`. A detector pair such as `[0.75, 1.0]` selects simulated
 precision and recall. Use `"sentinel"` for Sentinel and `"supervised"` or
 `false` for supervised boundaries.
 
@@ -168,13 +168,14 @@ by supervised conditions. Configurations are ordered numerically within each
 condition. `--workers` limits the number of concurrent jobs and defaults to
 four. The launcher removes the temporary files when the queue ends.
 
-Follow `outputs/gru/queue.log` to see which jobs have started and finished.
-Each job has its own `run.log` in a directory with the same name as its
-results directory under `performance/gru/`, such as
-`weather_3conf_75prec_100rec`.
+The campaign output directory takes its name from the campaign JSON filename.
+For `weather_gru.json`, follow `outputs/weather_gru/queue.log` to see which
+jobs have started and finished. Per-job logs are stored under
+`outputs/weather_gru/processes/`, for example `weather_3conf_75prec_100rec.log`.
+`PATH_PERFORMANCE` still controls the results directory.
 
 Both launchers also write a `status.txt` beside `queue.log`.
-`outputs/gru/status.txt` shows the current campaign queue and
+`outputs/weather_gru/status.txt` shows the current campaign queue in this example and
 `outputs/prepare_detections/status.txt` shows the current detection queue.
 The file is refreshed when a job starts or finishes. It lists running,
 completed and failed jobs, followed by pending jobs in launch order.

@@ -22,18 +22,18 @@ def campaign_streams():
     for filename in sorted(CAMPAIGNS.glob("*.json")):
         with filename.open(encoding="utf-8") as file:
             campaign = json.load(file)
-        rows = campaign.pop("campaign")
+        rows = campaign.pop("CAMPAIGN")
         params = PARAMETERS.copy()
         params.update(campaign)
         for row in rows:
-            numbers = row["configurations"]
+            numbers = row["CONFIGURATIONS"]
             if isinstance(numbers, dict):
-                first, last = numbers["range"]
+                first, last = numbers["RANGE"]
                 numbers = range(first, last + 1)
             for number in numbers:
-                name = f"{row['dataset']}_{number}conf"
+                name = f"{row['DATASET']}_{number}conf"
                 train_name = name + "_train" if params["DO_CL"] else name
-                yield params, row["detector"], name, Path(params["PATH_DATASET"]) / train_name
+                yield params, row["DETECTOR"], name, Path(params["PATH_DATASET"]) / train_name
 
 
 def save_pickle(destination, value):
