@@ -1,0 +1,161 @@
+{
+  "MODE": "aws",
+  "PATH_DATASET": "datasets",
+  "PATH_PERFORMANCE": "gru",
+  "PATH_LOAD_DETECTIONS": "detections",
+  "SAVE_BASE_LEARNER": false,
+  "PATH_BASE_LEARNER": "",
+  "UPLOAD_BASE_LEARNER": true,
+  "WRITE_CHECKPOINTS": true,
+  "PREPROCESS": null,
+  "DELAY_PARAM": null,
+  "DO_CL": true,
+  "BASE_RNN": [
+    "gru"
+  ],
+  "DETECTOR_SIMULATOR_MIN_DELAY": 0,
+  "DETECTOR_SIMULATOR_MAX_DELAY": 1000,
+  "ITERATIONS": 1,
+  "CALLBACK_FUNC": null,
+  "OUTPUT_FILE": null,
+  "SUFFIX": "",
+  "CAMPAIGN": [
+    {
+      "DATASET": "weather",
+      "CONFIGURATIONS": {
+        "RANGE": [
+          1,
+          20
+        ]
+      },
+      "DETECTOR": [
+        1.0,
+        1.0
+      ],
+      "LOAD_DETECTIONS": true,
+      "RNN_LEARNERS": [
+        "MAGIC_Net",
+        "DYNcPNN",
+        "cRNN",
+        "MAGIC_Net_sh",
+        "MAGIC_Net_binary",
+        "MAGIC_Net_no_ignore",
+        "MAGIC_Net_no_expand",
+        "MultiHeadCRNN_frozen",
+        "MultiHeadCRNN_learnable"
+      ],
+      "STREAM_LEARNERS": []
+    },
+    {
+      "DATASET": "weather",
+      "CONFIGURATIONS": {
+        "RANGE": [
+          1,
+          20
+        ]
+      },
+      "DETECTOR": "sentinel",
+      "LOAD_DETECTIONS": true,
+      "RNN_LEARNERS": [
+        "MAGIC_Net",
+        "DYNcPNN"
+      ],
+      "STREAM_LEARNERS": []
+    },
+    {
+      "DATASET": "weather",
+      "CONFIGURATIONS": {
+        "RANGE": [
+          1,
+          20
+        ]
+      },
+      "DETECTOR": [
+        0.5,
+        1.0
+      ],
+      "LOAD_DETECTIONS": true,
+      "RNN_LEARNERS": [
+        "MAGIC_Net",
+        "DYNcPNN"
+      ],
+      "STREAM_LEARNERS": []
+    },
+    {
+      "DATASET": "weather",
+      "CONFIGURATIONS": {
+        "RANGE": [
+          1,
+          20
+        ]
+      },
+      "DETECTOR": [
+        0.75,
+        1.0
+      ],
+      "LOAD_DETECTIONS": true,
+      "RNN_LEARNERS": [
+        "MAGIC_Net",
+        "DYNcPNN"
+      ],
+      "STREAM_LEARNERS": []
+    },
+    {
+      "DATASET": "weather",
+      "CONFIGURATIONS": {
+        "RANGE": [
+          1,
+          20
+        ]
+      },
+      "DETECTOR": [
+        0.75,
+        0.6
+      ],
+      "LOAD_DETECTIONS": true,
+      "RNN_LEARNERS": [
+        "MAGIC_Net",
+        "DYNcPNN"
+      ],
+      "STREAM_LEARNERS": []
+    },
+    {
+      "DATASET": "weather",
+      "CONFIGURATIONS": {
+        "RANGE": [
+          1,
+          20
+        ]
+      },
+      "DETECTOR": [
+        0.75,
+        0.75
+      ],
+      "LOAD_DETECTIONS": true,
+      "RNN_LEARNERS": [
+        "MAGIC_Net",
+        "DYNcPNN"
+      ],
+      "STREAM_LEARNERS": []
+    },
+    {
+      "DATASET": "weather",
+      "CONFIGURATIONS": {
+        "RANGE": [
+          1,
+          20
+        ]
+      },
+      "DETECTOR": [
+        0.75,
+        0.9
+      ],
+      "LOAD_DETECTIONS": true,
+      "RNN_LEARNERS": [
+        "MAGIC_Net",
+        "DYNcPNN"
+      ],
+      "STREAM_LEARNERS": []
+    }
+  ]
+}
