@@ -12,18 +12,18 @@ from evaluation.default_parameters import *
 # Settings for python -m evaluation.test.
 PARAMETERS = {
     "MODE": "local",
-    "PATHS": [f"datasets/weather_{conf}conf" for conf in range(1, 11)],
+    "PATHS": [f"datasets/weather_{conf}conf" for conf in range(1, 2)],
     "PATH_PERFORMANCE": "",
     "USE_DETECTOR": True,
     # Use None for both rates to run Sentinel.
-    "DETECTOR_SIMULATOR_PRECISION": 0.7,
+    "DETECTOR_SIMULATOR_PRECISION": 0.75,
     "DETECTOR_SIMULATOR_RECALL": 1,
     "DETECTOR_SIMULATOR_MIN_DELAY": 0,
     "DETECTOR_SIMULATOR_MAX_DELAY": 1000,
-    "LOAD_DETECTIONS": False,
-    "PATH_LOAD_DETECTIONS": None,
+    "LOAD_DETECTIONS": True,
+    "PATH_LOAD_DETECTIONS": "detections",
     "SAVE_BASE_LEARNER": True,
-    "PATH_BASE_LEARNER": "",
+    "PATH_BASE_LEARNER": "base_learner",
     "UPLOAD_BASE_LEARNER": True,
     "WRITE_CHECKPOINTS": True,
     "BASE_RNN": ["gru"],
@@ -45,7 +45,7 @@ PARAMETERS = {
     "CALLBACK_FUNC": None,
     "OUTPUT_FILE": None,
     "SUFFIX": "",
-    "RNN_LEARNERS": ["MAGIC_Net"],
+    "RNN_LEARNERS": ['cRNN', 'DYNcPNN', 'MAGIC_Net', 'MAGIC_Net_binary', 'MultiHeadCRNN_frozen', 'MultiHeadCRNN_learnable'],
     "STREAM_LEARNERS": [],
     # The launcher supplies the shared name for the result and log directories.
     "JOB_NAME": None,

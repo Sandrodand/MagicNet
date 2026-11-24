@@ -183,11 +183,11 @@ class EvaluatePrequential:
         else:
             if metric == "kappa":
                 return river_utils.Rolling(
-                    river_metrics.CohenKappa(), window_size=rolling
+                    river_metrics.CohenKappa, window_size=rolling
                 )
             if metric == "accuracy":
                 return river_utils.Rolling(
-                    river_metrics.BalancedAccuracy(), window_size=rolling
+                    river_metrics.BalancedAccuracy, window_size=rolling
                 )
 
     def _start_task(self, iteration, idx):
@@ -242,9 +242,7 @@ class EvaluatePrequential:
             for metric in self.metrics:
                 for t in ["all", "task"] + self.rolling_metrics:
                     # update the metrics
-                    self._eval[model_name]["metrics"][t][metric][
-                        iteration
-                    ] = self._eval[model_name]["metrics"][t][metric][iteration].update(
+                    self._eval[model_name]["metrics"][t][metric][iteration].update(
                         y, y_hat
                     )
                     # get metrics

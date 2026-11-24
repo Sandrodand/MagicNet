@@ -237,7 +237,7 @@ class MagicManager(object):
     def _new_rolling_metrics(self, batches):
         return {
             name: river_utils.Rolling(
-                metrics.CohenKappa(), window_size=batches * self.batch_size
+                metrics.CohenKappa, window_size=batches * self.batch_size
             )
             for name in self.current_perf
         }

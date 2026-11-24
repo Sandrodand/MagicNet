@@ -64,7 +64,7 @@ class InferenceMagicNet:
         y = int(y)
         if timestamp in self.predictions:
             for i in range(len(self.predictions[timestamp])):
-                self.metrics[i] = self.metrics[i].update(
+                self.metrics[i].update(
                     y, self.predictions[timestamp][i]
                 )
             self.selected = np.argmax([m.get() for m in self.metrics])
@@ -137,7 +137,7 @@ class InferenceMagicNet:
         if self.rolling_window is not None:
             self.metrics = [
                 river_utils.Rolling(
-                    metrics.CohenKappa(), window_size=self.rolling_window
+                    metrics.CohenKappa, window_size=self.rolling_window
                 )
                 for _ in range(len(self.models))
             ]

@@ -1,9 +1,7 @@
-"""Save the initial recurrent models used by the campaign."""
+"""Save initial recurrent and linear weights used by the campaign."""
 
 import json
 from pathlib import Path
-import pickle
-from tempfile import NamedTemporaryFile
 
 import pandas as pd
 
@@ -36,21 +34,8 @@ def campaign_streams():
                 yield params, row["DETECTOR"], name, Path(params["PATH_DATASET"]) / train_name
 
 
-def save_pickle(destination, value):
-    """Write a complete pickle before publishing it at the destination."""
-    destination.parent.mkdir(parents=True, exist_ok=True)
-    with NamedTemporaryFile(dir=destination.parent, delete=False) as file:
-        temporary = Path(file.name)
-        try:
-            pickle.dump(value, file)
-            file.close()
-            temporary.replace(destination)
-        finally:
-            temporary.unlink(missing_ok=True)
-
-
 def prepare_base_learner(path, destination, rnn, params):
-    """Initialize and save one base learner."""
+    """Initialize one base learner and save its weights and dimension metadata."""
     columns = pd.read_csv(f"{path}.csv", nrows=0).columns
     num_features = len(columns.drop(["task", "target", "batch"], errors="ignore"))
     dataset = path.name.lower()
@@ -69,7 +54,7 @@ def prepare_base_learner(path, destination, rnn, params):
         save_column_freq=None,
         drift_delay=None,
     )
-    save_pickle(destination, cfg.create_cpnn_for_dynamic())
+    cfg.prepare_base_learners(destination.parent.parent, destination.stem, load=False)
     print(f"Saved {destination}")
 
 
@@ -78,7 +63,7 @@ def main():
     for params, _, _, path in campaign_streams():
         root = Path("base_learner") / params["PATH_BASE_LEARNER"]
         for rnn in params["BASE_RNN"]:
-            destination = root / rnn / f"{path.name}.pkl"
+            destination = root / rnn / f"{path.name}.pt"
             if not destination.exists():
                 prepare_base_learner(path, destination, rnn, params)
 

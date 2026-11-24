@@ -5,18 +5,21 @@ with GRU and LSTM backbones.
 
 ## Installation
 
-Use Python 3.11 (verified on 3.11.14) and the pinned dependencies:
+Use Python 3.12 and the pinned environment on macOS Intel or Linux:
 
 ```bash
-conda create -n magicnet python=3.11
+conda env create -f environment.yml
 conda activate magicnet
-python -m pip install -r requirements.txt
 python -m pip check
 ```
 
-The verified runtime uses NumPy 1.25.2, PyTorch 2.0.0, River 0.19.0 and
-scikit-learn 1.1.3. Keep versions consistent across campaign machines;
-upgrading NumPy or River requires compatibility checks.
+`environment.yml` installs PyTorch CPU from conda-forge, which provides recent
+builds for Intel Macs. The remaining dependencies are pinned in `requirements.txt`.
+Install through the environment file first: PyPI does not provide these recent
+PyTorch builds for macOS Intel. Keep the same package versions across machines.
+
+If an older Conda on macOS incorrectly detects the system as macOS 10.16, use
+`SYSTEM_VERSION_COMPAT=0 conda env create -f environment.yml`.
 
 ## Data and structure
 
@@ -87,9 +90,9 @@ The defaults below refer to the manual runner.
 
 | Parameter | Default | What it controls |
 | --- | --- | --- |
-| `SAVE_BASE_LEARNER` | `True` | Save the initial recurrent model for each architecture and stream, before evaluation training. With loading enabled, an existing architecture-specific archive is reused. |
-| `PATH_BASE_LEARNER` | `""` | Root directory for initial model archives. Relative paths are placed under `base_learner/`. For example, the default GRU archive for a CL run on Weather configuration 3 is `base_learner/gru/weather_3conf_train.pkl`. |
-| `UPLOAD_BASE_LEARNER` | `True` | Try to load a compatible local base learner archive. If no archive is found, initialize a fresh model. Set `False` to start from a fresh initialization even when an archive exists. |
+| `SAVE_BASE_LEARNER` | `True` | Save recurrent and initial linear-head weights with architecture/dimension metadata in a `.pt` file, before training. Existing files are reused when loading is enabled. |
+| `PATH_BASE_LEARNER` | `""` | Root directory for initial weights. Relative paths are placed under `base_learner/`, e.g. `base_learner/gru/weather_3conf_train.pt`. |
+| `UPLOAD_BASE_LEARNER` | `True` | Reconstruct a fresh base learner from compatible saved weights. If the file is missing, initialize new weights. Set `False` to initialize new weights even when an archive exists. |
 | `BASE_RNN` | `["gru"]` | Recurrent architectures to evaluate. Use `["gru"]`, `["lstm"]`, or `["gru", "lstm"]`. Each architecture runs the selected recurrent methods on the same stream and detector signal. |
 | `SEQ_LEN_PARAM` | `None` | Number of points in the recurrent input sequence. Use `None` for the dataset default. MAGIC Net and MultiHeadCRNN require a sequence length of at least 2. |
 | `BATCH_SIZE_PARAM` | `None` | Number of labeled points per recurrent training minibatch. The evaluator also uses this value to convert rolling metric windows from minibatches to points. `None` uses the dataset default. |
@@ -175,8 +178,13 @@ PARAMETERS["RNN_LEARNERS"] = ["MAGIC_Net", "MultiHeadCRNN_frozen", "DYNcPNN"]
 ```
 
 Within each architecture, methods receive independent copies of the same base
-learner. Archives use `<PATH_BASE_LEARNER>/<gru_or_lstm>/<dataset>.pkl`;
-loading checks architecture and dimensions. Results distinguish architectures,
+learner. Archives use `<PATH_BASE_LEARNER>/<gru_or_lstm>/<dataset>.pt` and contain
+only weights and metadata. Loading validates architecture and dimensions, then
+constructs a new learner with a fresh Adam optimizer, metrics and buffers while
+preserving the experiment's random-generator state. Old `.pkl` base learners are
+not read; regenerate initializations with `python -m evaluation.prepare_base_learner`.
+All methods share the initial weights and optimizer settings and follow the
+same training trajectory before the first detection. Results distinguish architectures,
 e.g. `MAGIC_Net_gru` and `MAGIC_Net_lstm`. Direct `Config` factories accept
 `rnn="gru"` or `rnn="lstm"`; omission is allowed only with one architecture.
 

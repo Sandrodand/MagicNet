@@ -4,9 +4,10 @@ import argparse
 import csv
 import json
 import os
+import pickle
 from pathlib import Path
 import sys
-from tempfile import TemporaryDirectory
+from tempfile import NamedTemporaryFile, TemporaryDirectory
 
 import pandas as pd
 
@@ -14,8 +15,21 @@ from detectors.detector_simulator import DetectorSimulator
 from evaluation.buffer import Buffer
 from evaluation.default_parameters import set_adwin_delta, set_delay, set_seq_len
 from evaluation.parameter_config import Config
-from evaluation.prepare_base_learner import campaign_streams, save_pickle
+from evaluation.prepare_base_learner import campaign_streams
 from evaluation.run_campaign import run_jobs
+
+
+def save_pickle(destination, value):
+    """Write a complete detection pickle before publishing it at the destination."""
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    with NamedTemporaryFile(dir=destination.parent, delete=False) as file:
+        temporary = Path(file.name)
+        try:
+            pickle.dump(value, file)
+            file.close()
+            temporary.replace(destination)
+        finally:
+            temporary.unlink(missing_ok=True)
 
 
 def prepare_detections(path, detector, destination, params):

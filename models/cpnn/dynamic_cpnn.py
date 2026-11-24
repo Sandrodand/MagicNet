@@ -191,12 +191,12 @@ class DynamicCPNN:
     def _reset_rolling_metrics(self):
         batch_size = self.ensemble[0].model.batch_size
         self.rolling_metrics = [
-            river_utils.Rolling(metrics.CohenKappa(), window_size=10 * batch_size)
+            river_utils.Rolling(metrics.CohenKappa, window_size=10 * batch_size)
             for _ in self.ensemble
         ]
         self.selection_metrics = [
             river_utils.Rolling(
-                metrics.CohenKappa(), window_size=self.selection_batches * batch_size
+                metrics.CohenKappa, window_size=self.selection_batches * batch_size
             )
             for _ in self.ensemble
         ]
@@ -368,8 +368,8 @@ class DynamicCPNN:
                 old_model.reset_previous_data_points()
                 old_k = metrics.CohenKappa()
                 for x, y in zip(self.concept_x["old"], self.concept_y["old"]):
-                    old_k = old_k.update(y, old_model.predict_one(x, timestamp=-1))
-                    current_k = current_k.update(
+                    old_k.update(y, old_model.predict_one(x, timestamp=-1))
+                    current_k.update(
                         y, current_model.predict_one(x, timestamp=-1)
                     )
                 if old_k.get() - current_k.get() >= self.minimum_k_difference:

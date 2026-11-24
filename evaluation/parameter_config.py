@@ -1,6 +1,9 @@
 import os
 import pickle
 from functools import partial
+from tempfile import NamedTemporaryFile
+
+import torch
 from river import forest, stream
 from river import tree
 from river.drift import ADWIN
@@ -388,50 +391,53 @@ class Config:
             raise ValueError("Select at least one learner")
         return learners
 
-    def _validate_base_learner(self, model, rnn):
-        if not isinstance(model, cPNN):
-            raise ValueError("Saved base learner must be a cPNN")
-        column = model.columns.columns[0]
-        expected = cGRULinear if rnn == "gru" else cLSTMLinear
-        if not isinstance(column, expected):
-            raise ValueError(f"Saved base learner is not a {rnn.upper()}")
-        dimensions = (column.input_size, column.hidden_size, column.output_size,
-                      model.seq_len, model.batch_size)
-        wanted = (self.num_features, self.hidden_size[rnn], self.output_size,
-                  self.seq_len, self.batch_size)
-        if dimensions != wanted or len(model.columns.columns) != 1:
-            raise ValueError(f"Saved {rnn.upper()} base learner does not match the configured dimensions")
-
     def prepare_base_learners(self, root, dataset, load=True, save=True):
-        """Load or initialize each architecture independently after dataset setup."""
+        """Load or save initial column weights in <root>/<rnn>/<dataset>.pt.
+
+        Archives contain CPU tensors and architecture/dimension metadata only.
+        Loading constructs a fresh learner with the current training settings;
+        optimizers, metrics, buffers and counters are never restored. Missing
+        archives initialize a new prototype. Legacy pickle files are ignored.
+        save writes new initializations atomically and leaves loaded files intact.
+        """
         for rnn in self.base_rnn:
-            filename = os.path.join(root, rnn, f"{dataset}.pkl")
-            model = None
-            if load:
-                try:
-                    with open(filename, "rb") as stream:
-                        model = pickle.load(stream)
-                except FileNotFoundError:
-                    # Flat legacy files are unambiguous only after checking their RNN type.
-                    legacy = os.path.join(root, f"{dataset}.pkl")
-                    if os.path.isfile(legacy):
-                        with open(legacy, "rb") as stream:
-                            candidate = pickle.load(stream)
-                        expected = cGRULinear if rnn == "gru" else cLSTMLinear
-                        if isinstance(candidate, cPNN) and isinstance(candidate.columns.columns[0], expected):
-                            model = candidate
-            if model is not None:
-                self._validate_base_learner(model, rnn)
-                model.set_save_column_freq(self.save_column_freq, self.drift_delay)
-                self.base_learner[rnn].set_base_learner(model)
+            filename = os.path.join(root, rnn, f"{dataset}.pt")
+            metadata = dict(
+                rnn=rnn, input_size=int(self.num_features),
+                hidden_size=int(self.hidden_size[rnn]), output_size=int(self.output_size),
+                seq_len=int(self.seq_len), batch_size=int(self.batch_size),
+            )
+            if load and os.path.isfile(filename):
+                archive = torch.load(filename, map_location="cpu", weights_only=True)
+                if (
+                    not isinstance(archive, dict)
+                    or archive.get("metadata") != metadata
+                    or "state_dict" not in archive
+                ):
+                    raise ValueError(f"Saved {rnn.upper()} weights do not match the configured architecture and dimensions: {filename}")
+                self.base_learner[rnn].set_base_learner(archive["state_dict"])
                 print(f"{rnn.upper()} base learner loaded.")
             else:
                 self.base_learner[rnn].reset_base_learner()
                 print(f"{rnn.upper()} base learner initialized.")
             if save and (not load or not os.path.isfile(filename)):
                 os.makedirs(os.path.dirname(filename), exist_ok=True)
-                with open(filename, "wb") as stream:
-                    pickle.dump(self.base_learner[rnn].get_base_learner(), stream)
+                column = self.base_learner[rnn].base_learner.columns.columns[0]
+                archive = {
+                    "metadata": metadata,
+                    "state_dict": {
+                        key: value.detach().cpu().clone()
+                        for key, value in column.state_dict().items()
+                    },
+                }
+                with NamedTemporaryFile(dir=os.path.dirname(filename), delete=False) as stream:
+                    try:
+                        torch.save(archive, stream)
+                        stream.close()
+                        os.replace(stream.name, filename)
+                    finally:
+                        if os.path.exists(stream.name):
+                            os.unlink(stream.name)
 
     def callback_func_cl(self, **kwargs):
         """Request continual-learning evaluation for the requested iteration range."""
@@ -599,10 +605,17 @@ class BaseLearner:
         self.base_learner = None
 
     def get_base_learner(self):
-        """Return a copy of the prototype, creating it lazily if needed."""
+        """Return a fresh learner with the prototype's weights and clean training state."""
         if self.base_learner is None:
             self.reset_base_learner()
-        return pickle.loads(pickle.dumps(self.base_learner))
+        return self._new_learner(self.base_learner.columns.columns[0].state_dict())
+
+    def _new_learner(self, state_dict):
+        # Rebuilding discarded random weights must not consume the experiment RNG.
+        with torch.random.fork_rng(devices=[]):
+            model = self.learner_func()
+        model.columns.columns[0].load_state_dict(state_dict, strict=True)
+        return model
 
     def get_cpnn(self):
         """Return an independent copy of the cached cPNN."""
@@ -616,6 +629,6 @@ class BaseLearner:
         """Discard the cached prototype so the next request rebuilds it."""
         self.base_learner = None
 
-    def set_base_learner(self, base_learner):
-        """Cache an independent copy of the supplied base learner."""
-        self.base_learner = pickle.loads(pickle.dumps(base_learner))
+    def set_base_learner(self, state_dict):
+        """Cache a fresh prototype initialized from recurrent and linear weights."""
+        self.base_learner = self._new_learner(state_dict)
